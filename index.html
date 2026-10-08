@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UMBRAL VX · Visual eXperiments</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 fill=%22%230c0b09%22/%3E%3Cpath d=%22M3 13V4h10%22 stroke=%22%23ece6da%22 fill=%22none%22/%3E%3C/svg%3E">
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="capa"></div>
+
+<div id="hud">
+  <div id="velo"></div>
+  <section id="ficha">
+    <div id="f-firma"></div>
+    <div class="f-txt">
+      <div class="f-cab"><span id="f-num"></span><span id="f-acto"></span></div>
+      <h1 id="f-nombre"></h1>
+      <p id="f-lema"></p>
+      <div class="f-pie"><span class="f-regla"></span><span id="f-dato"></span></div>
+      <div id="f-origen"></div>
+      <div id="f-calidad"></div>
+    </div>
+  </section>
+  <div id="f-mini"></div>
+  <aside id="instrumentos"></aside>
+  <aside id="mando"></aside>
+  <div id="recorrido"><span id="rec-sig"></span><div id="rec-barra"></div></div>
+  <div id="errores"></div>
+</div>
+<div id="aviso"></div>
+
+<div id="portada">
+  <canvas id="p-firma"></canvas>
+  <div class="p-txt">
+    <div id="p-num"></div>
+    <div id="p-nombre"></div>
+    <div id="p-lema"></div>
+  </div>
+</div>
+
+<div id="antesala">
+  <canvas id="a-fondo"></canvas>
+  <div id="a-col">
+    <header>
+      <div class="marca" id="a-bajada"></div>
+      <div class="a-titulo" id="a-marca"></div>
+      <p class="a-intro">Doce fenómenos que le piden todo a la GPU. Cada sala tiene su umbral; tu equipo decide cuáles cruzas y con qué calidad.</p>
+    </header>
+    <nav id="a-indice"></nav>
+    <div id="a-opciones"></div>
+  </div>
+  <div id="a-equipo"><div class="eq-cab">Tu equipo</div><div id="eq-txt">midiendo…</div><div id="eq-barra"><i></i></div></div>
+  <figure id="a-lamina">
+    <div class="marco"><img id="a-img" alt=""><canvas id="a-glifo"></canvas></div>
+    <figcaption>
+      <div class="a-cab"><span id="a-num"></span><span id="a-acto"></span></div>
+      <div id="a-nombre"></div>
+      <p id="a-lema"></p>
+      <div id="a-origen"></div>
+      <div id="a-veredicto"></div>
+    </figcaption>
+  </figure>
+  <div id="a-ayuda"></div>
+</div>
+
+<div id="pausa"><span>En pausa</span> la ventana perdió el foco</div>
+
+<section id="sin-gpu" hidden>
+  <div class="sg-col">
+    <div class="marca">Umbral · galería de cómputo pesado</div>
+    <h1>Tu equipo no soporta WebGPU</h1>
+    <p class="sg-en" lang="en">Your browser can’t reach the graphics card (no WebGPU, no WebGL2).</p>
+    <p>Umbral simula galaxias, fluidos, fractales y luz directamente en la tarjeta gráfica, y este navegador no le da acceso: ni con WebGPU ni con WebGL2. No es un problema de tu equipo; casi siempre se resuelve así:</p>
+    <ul>
+      <li>actualizar a Chrome o Edge recientes, Safari 26 o Firefox reciente;</li>
+      <li>activar la aceleración por hardware en la configuración del navegador;</li>
+      <li>abrirlo en una computadora en lugar del teléfono.</li>
+    </ul>
+    <p class="sg-acc"><a id="sg-video" target="_blank" rel="noopener">Ver el recorrido en video</a></p>
+    <div id="sg-laminas"></div>
+    <p class="sg-motivo">detalle técnico · <span id="sg-motivo"></span></p>
+  </div>
+</section>
+
+<script>
+// captura temprana de errores (incluye fallos al cargar módulos)
+window.__early = (m) => {
+  const el = document.getElementById('errores'); if (el) el.textContent += m + '\n'; };
+addEventListener('error', (e) => (e.target && e.target.tagName === 'IMG') || __early((e.message || 'error') + ' @' + (e.filename || (e.target && e.target.src) || '') + ':' + (e.lineno || '')), true);
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
