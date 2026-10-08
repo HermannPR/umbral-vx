@@ -1,3 +1,5 @@
-PUBLICAR.md
-.git
 .DS_Store
+.env*
+.git
+.vercel
+PUBLICAR.md

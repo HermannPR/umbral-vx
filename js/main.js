@@ -91,6 +91,8 @@ async function boot() {
   if (params.has('sin-gpu')) { sinGPU('forzado con ?sin-gpu'); return; }
   const gpu = params.get('webgl') == null ? await initWebGPU(report).catch((e) => { report(e.message); return null; }) : null;
   gpuRef = gpu;
+  // si la GPU se pierde a media visita (el proceso de la GPU se reinició), se recarga sola una o dos veces; si insiste, la página amable
+  if (gpu) gpu.device.lost.then((info) => { if (info.reason !== 'destroyed') perdidaGPU(info.message || 'dispositivo perdido'); });
   let gl = null, rendererGL = '';
   if (!gpu) {
     gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
@@ -179,6 +181,14 @@ function gobernarCalidad(rawDt) {
   entrar(idx, true);
 }
 
+function perdidaGPU(msg) {
+  let n = 0;
+  try { const r = JSON.parse(sessionStorage.getItem('umbral.perdida') || '{}'); n = Date.now() - (r.t || 0) < 60000 ? r.n || 0 : 0; sessionStorage.setItem('umbral.perdida', JSON.stringify({ t: Date.now(), n: n + 1 })); } catch {}
+  log({ type: 'gpu-perdida', msg, n });
+  if (n < 2) { aviso('La GPU se reinició · volviendo a cargar'); setTimeout(() => location.reload(), 1600); }
+  else sinGPU('la GPU se perdió varias veces seguidas: ' + msg);
+}
+
 // ---------- sin GPU: página amable con el video y las láminas ----------
 function sinGPU(motivo) {
   document.body.classList.add('sin-gpu');
@@ -244,7 +254,12 @@ async function entrar(i, primera = false) {
     await d.init();
     if (ctx.device) await ctx.device.queue.onSubmittedWorkDone();
     current = d;
-  } catch (e) { report('init ' + S.nombre + ': ' + (e.stack || e.message)); }
+  } catch (e) {
+    report('init ' + S.nombre + ': ' + (e.stack || e.message));
+    // en vez de un lienzo negro: una nota tranquila y cómo seguir
+    $('capa').innerHTML = `<div class="fallo"><div class="rotulo-t">Nº ${num(i)} · no arrancó</div><p>${S.nombre} no pudo arrancar en este equipo.</p>
+      <div class="rotulo">${input.connected ? 'LB RB' : '← →'} otra sala · ${input.connected ? 'B' : 'esc'} antesala</div></div>`;
+  }
   refrescarLeyenda();
   salaT = 0; perf.fps = 60; perf.gpuMs = null; gpuAcc = []; frameAcc = [];
   framesSala = 0;
@@ -297,19 +312,28 @@ function nombreModo() {
   const D = current.constructor;
   return D.palettes ? D.palettes[current.palette] : '';
 }
+let modoMostrado = '';
 function refrescarLeyenda() {
   if (!current || idx < 0) return;
-  $('mando').innerHTML = leyenda(current.constructor, input.connected, nombreModo());
+  modoMostrado = nombreModo();
+  $('mando').innerHTML = leyenda(current.constructor, input.connected, modoMostrado);
+  lastHeld = null;                // los glifos nuevos vuelven a marcar lo que esté apretado
+  medirMando();
+}
+// instrumentos y ayuda comparten el lado derecho: si están los dos, los instrumentos se recortan arriba de la ayuda
+function medirMando() {
+  const m = $('mando');
+  document.documentElement.style.setProperty('--alto-mando', (m.classList.contains('visible') ? m.offsetHeight : 0) + 'px');
 }
 // ayuda: 3 s al entrar a una sala; «?» la fija o la quita
 function mostrarAyuda(ms) {
-  refrescarLeyenda();
   $('mando').classList.add('visible'); clearTimeout(ayudaT);
-  if (ms) ayudaT = setTimeout(() => { if (!ayudaFija) $('mando').classList.remove('visible'); }, ms);
+  refrescarLeyenda();
+  if (ms) ayudaT = setTimeout(() => { if (!ayudaFija) { $('mando').classList.remove('visible'); medirMando(); } }, ms);
 }
 function alternarAyuda() {
   ayudaFija = !$('mando').classList.contains('visible') || !ayudaFija;
-  if (ayudaFija) mostrarAyuda(0); else { clearTimeout(ayudaT); $('mando').classList.remove('visible'); }
+  if (ayudaFija) mostrarAyuda(0); else { clearTimeout(ayudaT); $('mando').classList.remove('visible'); medirMando(); }
 }
 // ↑ ↓: modo de la sala (o preset de color si la sala no tiene modos)
 function cambiarModo(dir) {
@@ -349,6 +373,7 @@ function cerrarAntesala() {
   if (reconstruir || nivelPara(idx) !== ctx.calidad.nivel) return entrar(idx, true);
   antesala.ocultar(); modo = 'sala';
   document.documentElement.style.setProperty('--acento', SALAS[idx].acento);
+  llenarFicha(idx);               // p. ej. «(manual)» si se fijó la calidad en la antesala
   sonido.partitura(SALAS[idx].slug);
   if (pausaSala) sonido.pausar();
   mostrarPausa();
@@ -384,7 +409,11 @@ function manejarBotones() {
   if (P.up) cambiarModo(1); else if (P.down) cambiarModo(-1);
   const D = current.constructor;
   if (P.x && D.palettes) { current.palette = (current.palette + 1) % D.palettes.length; aviso('Paleta · ' + D.palettes[current.palette]); refrescarLeyenda(); }
-  if (P.y && !(D.controls && D.controls.y === null)) { current.chaos = !current.chaos; aviso((D.controls && D.controls.y) ? D.controls.y + (current.chaos ? ' · sí' : ' · no') : current.chaos ? 'Modo caos' : 'Modo sereno'); }
+  if (P.y && !(D.controls && D.controls.y === null)) {
+    // C / Y: una acción de un golpe (accionY devuelve qué pasó) o una alternancia (sí / no)
+    if (current.accionY) { const n = current.accionY(); if (n) aviso(n); }
+    else { current.chaos = !current.chaos; aviso((D.controls && D.controls.y) ? D.controls.y + (current.chaos ? ' · sí' : ' · no') : current.chaos ? 'Modo caos' : 'Modo sereno'); }
+  }
   if (P.a) { input.rumble(); sonido.evento('a'); }
 }
 
@@ -517,7 +546,7 @@ function frame(now) {
   }
 }
 
-let lastHeld = '';
+let lastHeld = null;
 function actualizarGlifos() {
   const h = Object.keys(input.held).sort().join(',') + (input.l2 > 0.1 ? ',l2' : '') + (input.r2 > 0.1 ? ',r2' : '') +
     (Math.hypot(input.lx, input.ly) > 0.2 ? ',ls' : '') + (Math.hypot(input.rx, input.ry) > 0.2 ? ',rs' : '');
@@ -527,6 +556,7 @@ function actualizarGlifos() {
 }
 
 function dibujarDatos() {
+  if (nombreModo() !== modoMostrado) refrescarLeyenda();
   const rows = current.stats ? current.stats() : [];
   const big = rows.find((r) => r !== '-' && r[2]);
   const lectura = current.lectura ? current.lectura() : big ? `${big[1]} ${big[0]}` : '';
@@ -535,26 +565,29 @@ function dibujarDatos() {
   const D = current.constructor, g = [];
   const row = (k, v, c = '') => `<div class="r ${c}"><span>${k}</span><b>${v}</b></div>`;
   g.push(`<div class="tit">Instrumentos · ${ctx.api === 'webgpu' ? 'WebGPU' : 'WebGL2'}${ctx.gpuInfo ? ' · ' + ctx.gpuInfo : ''}</div>`);
-  g.push(row('fps', perf.fps.toFixed(0), 'g'));
+  g.push(row('fps', perf.fps.toFixed(0), 'dest'));
   g.push(row('ms / frame', perf.frameMs.toFixed(2)));
   if (perf.gpuMs != null) g.push(row('GPU ms / frame', perf.gpuMs.toFixed(2)));
   g.push(row('resolución', `${ctx.W} × ${ctx.H}`));
   g.push(row('calidad', ctx.calidad ? ctx.calidad.nombre : '—'));
   if (perfil && perfil.gflops) g.push(row('equipo', `${perfil.nivel.nombre} · ${fmtG(perfil.gflops)}`));
   g.push('<div class="sep"></div>');
-  for (const r of rows) g.push(r === '-' ? '<div class="sep"></div>' : row(r[0], r[1], r[2] ? 'g' : ''));
+  for (const r of rows) g.push(r === '-' ? '<div class="sep"></div>' : row(r[0], r[1], r[2] ? 'dest' : ''));
   g.push('<div class="sep"></div>');
   if (D.palettes) g.push(row('paleta', D.palettes[current.palette]));
   if (current.chaos) g.push(row('modo', 'caos'));
   g.push(row('recorrido', recorrido ? `${Math.max(0, REC_S - salaT).toFixed(0)} s` : 'detenido'));
-  $('instrumentos').innerHTML = g.join('');
+  const I = $('instrumentos');
+  I.innerHTML = g.join('');
+  I.classList.toggle('recortado', I.scrollHeight > I.clientHeight + 1);
 }
 
 // ---------- ganchos de prueba (herramientas/capturar.mjs) ----------
 window.__lab = {
-  ready: false, count: SALAS.length, sinGPU: null,
+  ready: false, count: SALAS.length, sinGPU: null, slugs: SALAS.map((S) => S.slug),
   async go(i) { if (i === 0) { abrirAntesala(); return; } if (modo === 'antesala' && i - 1 === idx && current) { await cerrarAntesala(); return; } await entrar(i - 1); },
-  info() { return { modoVista: modo, ocupado, pausada: pausaSala, frames: framesSala, modo: nombreModo(), sel: antesala && antesala.sel, ayuda: $('mando').classList.contains('visible'), slug: modo === 'antesala' ? 'antesala' : SALAS[idx].slug, perf: { fps: +perf.fps.toFixed(1), gpuMs: perf.gpuMs && +perf.gpuMs.toFixed(2) }, calidad: ctx && ctx.calidad && ctx.calidad.nombre, W: ctx && ctx.W, errores }; },
+  info() { return { modoVista: modo, ocupado, pausada: pausaSala, frames: framesSala, modo: nombreModo(), sel: antesala && antesala.sel, ayuda: $('mando').classList.contains('visible'), slug: modo === 'antesala' ? 'antesala' : SALAS[idx].slug, perf: { fps: +perf.fps.toFixed(1), gpuMs: perf.gpuMs && +perf.gpuMs.toFixed(2) }, calidad: ctx && ctx.calidad && ctx.calidad.nombre, W: ctx && ctx.W, errores,
+    audio: { pausado: !!sonido.pausado, estado: sonido.ac ? sonido.ac.state : 'sin contexto', partitura: sonido.actual ? sonido.actual.nombre : '' } }; },
   perfil() { return { perfil, evals, api: ctx && ctx.api, rendererGL: ctx && ctx.rendererGL, escalaGL: ctx && ctx.escalaGL, ajuste }; },
   hud(v) { $('hud').classList.toggle('oculto', !v); $('capa').style.visibility = v ? '' : 'hidden'; },
   despertar,

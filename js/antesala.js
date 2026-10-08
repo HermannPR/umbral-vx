@@ -6,11 +6,15 @@ import { glifo } from './hud.js';
 
 const $ = (id) => document.getElementById(id);
 const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+const CUANTOS = ['Ningún', 'Un', 'Dos', 'Tres', 'Cuatro', 'Cinco', 'Seis', 'Siete', 'Ocho', 'Nueve', 'Diez', 'Once', 'Doce', 'Trece', 'Catorce', 'Quince', 'Dieciséis'];
 
 export class Antesala {
   constructor({ onSala, onOpcion, sonido, disponible = () => true, evaluacion = () => null }) {
     Object.assign(this, { onSala, onOpcion, sonido, disponible, evaluacion });
     $('a-marca').textContent = MARCA.nombre; $('a-bajada').textContent = MARCA.bajada;
+    // el número sale del catálogo (12 en la versión pública, 14 aquí)
+    const intro = document.querySelector('#antesala .a-intro');
+    if (intro) intro.textContent = intro.textContent.replace(/^\S+ fenómenos/, `${CUANTOS[SALAS.length] || SALAS.length} fenómenos`);
     this.el = $('antesala'); this.visible = false; this.sel = 0; this.cur = -1; this.estado = {};
     this.items = [...SALAS.map((s, i) => ({ tipo: 'sala', i })), { tipo: 'recorrido' }, { tipo: 'calidad' }, { tipo: 'sonido' }, { tipo: 'instrumentos' }, { tipo: 'medir' }];
     this.nS = SALAS.length;
@@ -38,13 +42,14 @@ export class Antesala {
     this.img.addEventListener('error', () => { this.img.classList.remove('ok'); this.sinImagen = true; this.animar(); });
     this.fondo = $('a-fondo'); this.glifo = $('a-glifo');
     this.next = 0; this.lastDir = '';
-    addEventListener('resize', () => this.visible && this.animar(true));
+    addEventListener('resize', () => { this.encajar(); if (this.visible) this.animar(true); });
   }
   mostrar(cur, estado) {
     this.cur = cur; this.estado = estado; this.visible = true;
     this.el.classList.add('visible');
     this.elegir(cur >= 0 ? cur : this.sel < this.nS ? this.sel : 0, false, true);
     this.render();
+    this.encajar();                 // después de render: las opciones de abajo también ocupan alto
     this.next = performance.now() + 250;
   }
   ocultar() { this.visible = false; this.el.classList.remove('visible'); }
@@ -124,8 +129,8 @@ export class Antesala {
     ];
     $('a-opciones').innerHTML = ops.map((o, i) => `<span class="op${this.sel === n + i ? ' sel' : ''}" data-k="${n + i}">${o}</span>`).join('');
     const pad = !!e.pad;
-    $('a-ayuda').innerHTML = `<span>${glifo('dpad', pad)} elegir</span><span>${glifo('a', pad)} entrar</span>` +
-      (this.cur >= 0 ? `<span>${glifo('start', pad)} volver a la sala</span>` : '') + (pad ? '' : `<span><span class="g">P</span> recorrido</span>`);
+    $('a-ayuda').innerHTML = `<span>${glifo('ud', pad)} elegir</span><span>${glifo('a', pad)} entrar</span>` +
+      (this.cur >= 0 ? `<span>${pad ? glifo('start', true) : glifo('b', false)} volver a la sala</span>` : '') + (pad ? '' : `<span><span class="g">P</span> recorrido</span>`);
   }
   activar() {
     const it = this.items[this.sel];
@@ -146,6 +151,17 @@ export class Antesala {
     }
     this.lastDir = dir;
     if (inp.pressed.a) this.activar();
+  }
+
+  // el índice tiene que caber entero (14 salas en una pantalla de 800 px): si no cabe, se compacta por pasos
+  encajar() {
+    const col = $('a-col'), ind = $('a-indice'), raiz = this.el;
+    if (!col || !ind) return;
+    let k = 1;
+    raiz.style.setProperty('--compacto', k);
+    const sobra = () => ind.scrollHeight - ind.clientHeight;
+    while (sobra() > 1 && k > 0.56) { k = +(k - 0.04).toFixed(2); raiz.style.setProperty('--compacto', k); }
+    raiz.classList.toggle('apretada', k < 0.8);
   }
 
   // ---------- dibujo: firma grande de fondo + glifo dentro del marco si no hay lámina ----------

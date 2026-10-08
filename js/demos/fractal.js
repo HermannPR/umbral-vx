@@ -1,4 +1,5 @@
-// Sala 2: fractales 3D (Mandelbulb / Mandelbox) por raymarching en compute, resolución nativa.
+// Sala 2: fractales 3D (Mandelbulb / Mandelbox) por raymarching en compute, resolución nativa,
+// y un tercer modo 2D: Mandelbrot profundo (zoom sin fondo; ver profundo.js e investigacion/ZOOM-INFINITO.md).
 import { makeShader, Counters, U } from '../gpu.js';
 import { v3, fmt } from '../util.js';
 
@@ -185,7 +186,11 @@ function deBox(p, s) {
 
 export default class Fractal {
   static palettes = ['Ámbar', 'Glaciar', 'Neón', 'Obsidiana'];
-  static controls = { ls: 'volar (avanzar / lateral)', rs: 'mirar', trig: '− / + potencia del fractal', a: 'cambiar Mandelbulb ⇄ Mandelbox' };
+  static CONTROLES_3D = { ls: 'volar (avanzar / lateral)', rs: 'mirar', trig: '− / + potencia del fractal', a: 'cambiar Mandelbulb ⇄ Mandelbox' };
+  static CONTROLES_2D = { ls: 'desplazar · arrastrar', rs: '↕ acercar / alejar · rueda', trig: '− / + zoom (exponencial)', a: 'autopiloto: bucear sin fin', y: 'siguiente marcador · G guarda · R inicio · clic vuela' };
+  static activa = null;
+  static get controls() { return Fractal.activa && Fractal.activa.mode === 2 && !Fractal.activa.switching ? Fractal.CONTROLES_2D : Fractal.CONTROLES_3D; }
+  static MODOS = ['Mandelbulb', 'Mandelbox', 'Mandelbrot profundo'];
   static info = {
     title: 'Fractal 3D en tiempo real',
     short: 'Raymarching de Mandelbulb y Mandelbox',
@@ -204,6 +209,28 @@ export default class Fractal {
     this.pos = [0, 0.3, 2.4]; this.fwd = v3.norm(v3.mul(this.pos, -1));
     this.lastInput = -1e9; this.tt = 0; this.maxSteps = Math.round(180 * (0.45 + 0.55 * (this.ctx.calidad ? this.ctx.calidad.carga : 1)));
     if (this.distScale) this.pos = v3.mul(this.pos, this.distScale);
+    // el modo profundo solo en la sala propia (no dentro de Ensamble) y con WebGPU
+    this.conProfundo = !!this.sala && this.ctx.api === 'webgpu';
+    this.destino = 0; this.prof = null; this.profCarga = null;
+    if (this.conProfundo) {
+      Fractal.activa = this;
+      if (new URLSearchParams(location.search).has('profundo') && await this.cargarProfundo()) { this.mode = 2; this.destino = 2; }
+    }
+  }
+  // carga perezosa: la versión pública puede no traer profundo.js; entonces el modo no aparece
+  cargarProfundo() {
+    if (!this.profCarga) {
+      this.profCarga = import('./profundo.js').then(async ({ default: Profundo }) => {
+        const p = new Profundo(this.ctx, this); await p.init(); this.prof = p; return true;
+      }).catch((e) => { this.ctx.report('profundo: ' + (e.message || e)); this.conProfundo = false; return false; });
+    }
+    return this.profCarga;
+  }
+  get nModos() { return this.conProfundo ? 3 : 2; }
+  pedirModo(m) {
+    if (this.switching || m === this.mode) return;
+    if (m === 2) this.cargarProfundo();
+    this.destino = m; this.switching = 1;
   }
   de(p) { return this.mode === 0 ? deBulb(p, this.power) : deBox(p, this.boxScale); }
   autopilot(t) {
@@ -221,17 +248,27 @@ export default class Fractal {
   frame(enc, dt, t) {
     const d = this.ctx.device, inp = this.ctx.input, W = this.ctx.W, H = this.ctx.H;
     this.tt += dt * (this.chaos ? 2.5 : 1);
-    // cambio de fractal con fundido
-    if (inp.pressed.a && !this.switching) this.switching = 1;
+    // cambio de fractal con fundido (A alterna los dos 3D; ↑ ↓ recorren los tres)
+    if (inp.pressed.a && !this.switching && this.mode !== 2) this.pedirModo(this.mode ^ 1);
     if (this.switching) {
-      this.fade -= dt / 0.35;
-      if (this.fade <= 0) {
-        this.fade = 0; this.switching = 0; this.mode ^= 1;
-        [this.pos, this.fwd] = this.autopilot(this.tt); this.lastInput = -1e9;
+      this.fade = Math.max(0, this.fade - dt / 0.35);
+      const listo = this.destino !== 2 || this.prof || (this.profCarga && !this.conProfundo);
+      if (this.fade <= 0 && listo) {
+        if (this.destino === 2 && !this.prof) this.destino = 0;          // no cargó: de vuelta al Mandelbulb
+        if (this.mode === 2 && this.prof) this.prof.ocultar();
+        this.switching = 0; this.mode = this.destino;
+        if (this.mode !== 2) { [this.pos, this.fwd] = this.autopilot(this.tt); this.lastInput = -1e9; }
         this.fadeIn = true;
       }
     } else if (this.fade < 1) this.fade = Math.min(1, this.fade + dt / 0.5);
     this.post.exposure = this.fade;
+    if (this.mode === 2 && this.prof) {
+      this.post.bloom = 0.22; this.post.vignette = 0.55;
+      if (!this.switching) this.prof.frame(enc, dt, t);
+      else this.prof.frame(enc, 0, t);
+      return;
+    }
+    this.post.bloom = 0.35; this.post.vignette = 0.7;
     // parámetro del fractal
     const trig = inp.r2 - inp.l2;
     if (this.mode === 0) {
@@ -278,11 +315,27 @@ export default class Fractal {
     p.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8)); p.end();
     this.cnt.copy(enc);
   }
-  after() { this.cnt.after(); }
-  onKey(k) { if (k === 'f') this.switching = 1; }
-  nombreModo() { return (this.mode ^ (this.switching ? 1 : 0)) ? 'Mandelbox' : 'Mandelbulb'; }
-  cambiarModo() { if (!this.switching) this.switching = 1; return this.nombreModo(); }
+  after() { if (this.mode === 2 && this.prof) this.prof.after(); else this.cnt.after(); }
+  onKey(k) {
+    if (k === 'f') this.pedirModo((this.mode + 1) % this.nModos);
+    if (this.mode !== 2 || !this.prof || this.switching) return;
+    if (k === 'g') this.prof.avisar(this.prof.guardarMarcador());
+    else if (k === 'r') { this.prof.reiniciar(); this.prof.avisar('De vuelta al inicio'); }
+  }
+  // C / Y: en el profundo recorre los marcadores; en los 3D, el modo caos de siempre
+  accionY() {
+    if (this.mode === 2 && this.prof && !this.switching) { const m = this.prof.siguienteMarcador(); this.prof.avisar(m); return m; }
+    this.chaos = !this.chaos; return this.chaos ? 'Modo caos' : 'Modo sereno';
+  }
+  nombreModo() { return Fractal.MODOS[this.switching ? this.destino : this.mode]; }
+  cambiarModo(dir = 1) { if (!this.switching) this.pedirModo((this.mode + (dir < 0 ? -1 : 1) + this.nModos) % this.nModos); return this.nombreModo(); }
+  lectura() {
+    if (this.mode === 2 && this.prof) return this.prof.lectura();
+    const big = this.stats().find((r) => r !== '-' && r[2]);
+    return big ? `${big[1]} ${big[0]}` : '';
+  }
   stats() {
+    if (this.mode === 2 && this.prof) return this.prof.stats();
     const W = this.ctx.W, H = this.ctx.H, fps = this.ctx.perf.fps, v = this.cnt.values;
     const evals = v ? v[0] : 0, prim = v ? v[1] : 0;
     const flopsPerEval = this.mode === 0 ? 8 * 48 : 12 * 26;
@@ -295,5 +348,9 @@ export default class Fractal {
       ['≈ cómputo', fmt.si(evals * fps * flopsPerEval, 'FLOP/s')],
     ];
   }
-  destroy() { this.ub.destroy(); this.cnt.destroy(); }
+  destroy() {
+    this.ub.destroy(); this.cnt.destroy();
+    if (this.prof) { this.prof.ocultar(); this.prof.destroy(); }
+    if (Fractal.activa === this) Fractal.activa = null;
+  }
 }

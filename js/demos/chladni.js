@@ -2,7 +2,7 @@
 // Idea de Math Visual Lab (figuras de Chladni). Cada grano salta en proporción a cuánto se mueve la placa
 // donde está; en las líneas nodales no se mueve, así que ahí se queda. La placa suena en su frecuencia.
 import { makeShader, U } from '../gpu.js';
-import { HASH, FS_VERT, fmt } from '../util.js';
+import { HASH, FS_VERT, fmt, zonaLibre } from '../util.js';
 
 const MODOS = [[1, 2], [1, 3], [2, 3], [1, 4], [3, 4], [2, 5], [1, 5], [3, 5], [4, 5], [2, 7], [3, 7], [5, 6], [4, 7], [1, 6], [5, 8], [3, 8], [6, 7]];
 const frec = (m, n) => 98 * Math.sqrt((m * m + n * n) / 5);
@@ -109,11 +109,12 @@ export default class Chladni {
     this.bgDraw = d.createBindGroup({ layout: this.pDraw.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.u } }, { binding: 1, resource: { buffer: this.acc } }] });
     this.k = 7; this.prev = MODOS[7]; this.cur = MODOS[7]; this.mezcla = 1; this.amp = 1; this.base = 0.55; this.reset = true;
     this.modoT = 0; this.seed = 1; this.sg = -1; this.ultNav = 0;
+    // la placa: tan grande como antes (74 % del alto), pero sin meterse bajo la ficha en ventanas chicas
+    this.geo = zonaLibre(1, { arriba: 64, extraAbajo: 34, maxH: innerHeight * 0.74, centroX: innerWidth / innerHeight > 1.4 ? 0.62 : 0.5 });
     this.rotulo();
   }
   rotulo() {
-    const [m, n] = this.cur, H = innerHeight, W = innerWidth, S = H * 0.74;
-    const x0 = W * (W / H > 1.4 ? 0.62 : 0.5) - S / 2, y0 = (H - S) / 2 - H * 0.035;
+    const [m, n] = this.cur, { x: x0, y: y0, w: S } = this.geo;
     this.ctx.capa.innerHTML = `<div style="position:absolute;left:44px;top:38px;max-width:${Math.max(220, x0 - 90)}px">
       <div class="rotulo-t" style="margin-bottom:10px">placa cuadrada, bordes libres</div>
       <div style="font:italic 400 16px/1.5 var(--serif);color:var(--papel-2)">u = cos nπx · cos mπy ${this.sg < 0 ? '−' : '+'} cos mπx · cos nπy</div></div>
@@ -128,6 +129,8 @@ export default class Chladni {
     this.rotulo();
   }
   nombreModo() { return `(${this.cur[0]}, ${this.cur[1]})`; }
+  // C / Y: esparcir la arena es un golpe, no una alternancia
+  accionY() { this.reset = true; this.amp = Math.max(this.amp, 1.2); this.ctx.sonido.evento('arco'); return 'Arena esparcida'; }
   cambiarModo(dir) { this.k = (this.k + dir + MODOS.length) % MODOS.length; this.ultNav = performance.now(); this.cambiar(MODOS[this.k]); return this.nombreModo(); }
   frame(enc, dt, t) {
     const d = this.ctx.device, inp = this.ctx.input, W = this.ctx.W, H = this.ctx.H;
@@ -138,12 +141,11 @@ export default class Chladni {
     if (inp.lx > 0.6) nav(0, 1); else if (inp.lx < -0.6) nav(0, -1);
     else if (inp.ly < -0.6) nav(1, 0); else if (inp.ly > 0.6) nav(-1, 0);
     if (inp.pressed.a) { this.amp = 1.4; this.ctx.sonido.evento('arco'); }
-    if (inp.pressed.y) this.reset = true;
     this.base = Math.max(0.15, Math.min(1, this.base + (inp.r2 - inp.l2) * dt * 0.6));
     if (this.modoT > 8 && (this.ctx.recorrido || now - this.ultNav > 12000)) { this.k = (this.k + 1) % MODOS.length; this.cambiar(MODOS[this.k]); if (this.k % 5 === 4) { this.sg = -this.sg; this.rotulo(); } }
     this.mezcla = Math.min(1, this.mezcla + dt / 1.6);
     this.amp += (this.base - this.amp) * Math.min(1, dt * 0.5);
-    const S = H * 0.74, x0 = Math.round(W * (W / H > 1.4 ? 0.62 : 0.5) - S / 2), y0 = Math.round((H - S) / 2 - H * 0.035);
+    const r = W / innerWidth, S = this.geo.w * r, x0 = Math.round(this.geo.x * r), y0 = Math.round(this.geo.y * r);
     const f = new Float32Array(20), u = new Uint32Array(f.buffer);
     f.set([W, H, t, this.palette || 0], 0); f.set([x0, y0, S, this.N], 4); f.set([...this.prev, ...this.cur], 8);
     const gain = 0.9 * 5.7e6 / (W * H) * (1.6e6 / this.N);

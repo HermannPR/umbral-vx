@@ -4,7 +4,7 @@
 // · La PINN entrenada (6 capas × 64, tanh, 48 rasgos de Fourier) se evalúa en la GPU sobre toda la malla:
 //   reconstruye el viento medio a partir de 250 sensores. La tercera vista compara ambas.
 import { makeShader, U, fadePipeline, BLEND_ADD } from '../gpu.js';
-import { HASH, FS_VERT, fmt } from '../util.js';
+import { HASH, FS_VERT, fmt, zonaLibre } from '../util.js';
 
 const U_LB = 0.1;          // 5 m/s de referencia en unidades de red
 const MODOS = ['LBM en vivo', 'PINN · 250 sensores', 'diferencia |PINN − media LBM|'];
@@ -343,9 +343,10 @@ export default class Viento {
     return [x, y];
   }
   disponer() {
-    const W = this.ctx.W, H = this.ctx.H;
-    const dw = Math.min(W * 0.8, H * 0.6 * 2), dh = dw / 2;
-    this.dom = [Math.round(W * 0.53 - dw / 2), Math.round(H * 0.4 - dh / 2), dw, dh];
+    // el plano de la ciudad (2:1) con sus rótulos abajo, tan grande como quepa sin pisar la ficha (en píxeles del lienzo)
+    const r = this.ctx.W / innerWidth;
+    const z = zonaLibre(2, { arriba: 84, extraAbajo: 66, maxW: innerWidth * 0.8, maxH: innerHeight * 0.6, centroX: 0.53 });
+    this.dom = [Math.round(z.x * r), Math.round(z.y * r), Math.round(z.w * r), Math.round(z.h * r)];
     this.rotulo();
   }
   rotulo() {
@@ -364,7 +365,7 @@ export default class Viento {
       <text class="rotulo" x="${x0 + m100 + 146}" y="${y0 + dh + 26}">viento del ${dir} · ${(this.modo > 0 ? 5 : this.vel).toFixed(1)} m/s</text>
       <defs><linearGradient id="vr"><stop offset="0" stop-color="#090d0f"/><stop offset=".33" stop-color="#173444"/><stop offset=".66" stop-color="#5d8ea3"/><stop offset="1" stop-color="#dfe6e6"/></linearGradient></defs>
       <rect x="${x0 + dw - 160}" y="${y0 + dh + 17}" width="160" height="5" fill="${this.modo === 2 ? '#e8743b' : 'url(#vr)'}"/>${ticks}
-      <text class="rotulo" x="${x0 + dw - 170}" y="${y0 + dh + 23}" text-anchor="end">${this.modo === 2 ? 'error m/s' : 'rapidez m/s'}</text>
+      <text class="rotulo" x="${x0 + dw - 172}" y="${y0 + dh + 40}" text-anchor="end">${this.modo === 2 ? 'error m/s' : 'rapidez m/s'}</text>
       <circle id="vt-sonda" r="7" fill="none" stroke="rgba(236,230,218,.9)"/><line id="vt-l" stroke="rgba(236,230,218,.5)"/>
       <text id="vt-txt" class="rotulo" style="fill:var(--papel)"></text>
       ${this.modo > 0 ? `<text class="rotulo" x="${x0}" y="${y0 + dh + 58}" style="fill:var(--papel-3)">la PINN se entrenó solo con viento del oeste a 5 m/s; error L2 de rapidez: PINN ${(this.datos.metrics.pinn_rel_l2_speed * 100).toFixed(1)} % · interpolación ${(this.datos.metrics.griddata_rel_l2_speed * 100).toFixed(1)} %</text>${this.modo === 2 ? `<text class="rotulo" x="${x0}" y="${y0 + dh + 76}" style="fill:var(--papel-3)">este LBM corre con menos viscosidad que la simulación que la entrenó: la media no tiene por qué coincidir</text>` : ''}` : ''}

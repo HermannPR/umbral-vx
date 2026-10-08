@@ -4,7 +4,7 @@
 //  1 · Mapa de volteo: cada píxel es un péndulo con (θ₁, θ₂) iniciales; el color dice cuándo voltea por primera vez.
 //  2 · Rotor pateado: el mapa estándar de Chirikov, un péndulo que recibe golpes periódicos; islas y mar caótico.
 import { makeShader, U, fadePipeline, BLEND_ADD, BLEND_DECAY, Counters } from '../gpu.js';
-import { HASH, FS_VERT, fmt } from '../util.js';
+import { HASH, FS_VERT, fmt, zonaLibre } from '../util.js';
 
 const G = 9.81;
 const COMUN = HASH + /* wgsl */`
@@ -226,6 +226,8 @@ export default class Pendulos {
     this.vista = 0; this.eps = 1e-4; this.K = 0.971635; this.th = [2.05, 2.6]; this.cur = [1.2, -0.4];
     this.reiniciar = [true, true, true]; this.simT = [0, 0, 0]; this.primero = true; this.vistaT = 0; this.seed = 1;
     this.testigos = null; this.uState = null; this.flips = 0; this.ultVuelta = 0;
+    // mapas (vistas II y III): cuadrado arriba de la ficha, con lugar para los ejes y para el péndulo testigo a la derecha
+    this.geo = zonaLibre(1, { arriba: 48, extraIzq: 44, extraAbajo: 30, maxH: innerHeight * 0.84, soloArriba: true });
     this.rotulo();
   }
   rotulo() {
@@ -237,7 +239,7 @@ export default class Pendulos {
     ][v];
     let ejes = '';
     if (v > 0) {
-      const S = H * 0.84, x0 = (W - S) / 2, y0 = (H - S) / 2;
+      const { x: x0, y: y0, w: S } = this.geo;
       const lx = v === 1 ? ['−π', 'θ₁', 'π'] : ['0', 'θ', '2π'], ly = v === 1 ? ['−π', 'θ₂', 'π'] : ['0', 'p', '2π'];
       ejes = `<svg width="${W}" height="${H}" style="position:absolute;inset:0">
         <rect x="${x0 - 0.5}" y="${y0 - 0.5}" width="${S + 1}" height="${S + 1}" fill="none" stroke="rgba(236,230,218,.18)"/>
@@ -245,7 +247,7 @@ export default class Pendulos {
         <text class="rotulo" x="${x0 - 14}" y="${y0 + S}" text-anchor="end">${ly[0]}</text><text class="rotulo" x="${x0 - 14}" y="${y0 + S / 2}" text-anchor="end" style="font-style:italic">${ly[1]}</text><text class="rotulo" x="${x0 - 14}" y="${y0 + 10}" text-anchor="end">${ly[2]}</text>
       </svg>`;
     }
-    capa.innerHTML = ejes + `<div class="nota" style="position:absolute;left:44px;top:38px;max-width:${v > 0 ? Math.max(200, (W - H * 0.84) / 2 - 80) : 380}px;transition:opacity .8s;opacity:0">
+    capa.innerHTML = ejes + `<div class="nota" style="position:absolute;left:44px;top:38px;max-width:${v > 0 ? Math.max(200, this.geo.x - 44 - 70) : 380}px;transition:opacity .8s;opacity:0">
       <div class="rotulo-t" style="margin-bottom:10px">${['I', 'II', 'III'][v]} · ${notas[0]}</div>
       <div style="font:italic 400 16px/1.45 var(--serif);color:var(--papel-2)">${notas[1]}</div></div>`;
     requestAnimationFrame(() => { const e = capa.querySelector('.nota'); if (e) e.style.opacity = 1; });
@@ -277,7 +279,7 @@ export default class Pendulos {
     if (res) { this.simT[v] = 0; this.reiniciar[v] = false; this.primero = true; if (v === 0) this.testigos = null; }
     const h = 1 / 240, subs = v === 0 ? 4 : v === 1 ? 3 : 80;
     this.simT[v] += h * subs;
-    const S = H * 0.84, x0 = (W - S) / 2, y0 = (H - S) / 2;
+    const r = W / innerWidth, S = this.geo.w * r, x0 = this.geo.x * r, y0 = this.geo.y * r;
     const L = H * 0.2;
     const gain = v === 0 ? 0.0045 * 6144 / this.NF : 0.0011 * (W * H) / (this.NR * subs);
     const f = new Float32Array(24), u32 = new Uint32Array(f.buffer);
@@ -302,7 +304,7 @@ export default class Pendulos {
       // el péndulo del cursor, dibujado a la derecha del mapa
       this.pasoUno(h, subs);
       const fu = new Float32Array(24); fu.set(f);
-      const libre = (W - S) / 2; fu.set([x0 + S + libre / 2, H * 0.36, Math.min(libre * 0.3, H * 0.15), this.palette || 0], 8); fu.set([W, H, t, v], 0); fu.set([h, subs, 1, 1.4], 4);
+      const libre = W - (x0 + S); fu.set([x0 + S + libre / 2, H * 0.36, Math.min(libre * 0.3, H * 0.15), this.palette || 0], 8); fu.set([W, H, t, v], 0); fu.set([h, subs, 1, 1.4], 4);
       d.queue.writeBuffer(this.uU, 0, fu); d.queue.writeBuffer(this.uno, 0, new Float32Array(this.uState));
       rp.setPipeline(this.pLin); rp.setBindGroup(0, this.bgUno); rp.draw(4, 1); rp.end();
     } else {

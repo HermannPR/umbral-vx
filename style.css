@@ -33,7 +33,9 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
   transition: opacity 1.2s var(--suave); }
 
 #ficha { position: absolute; left: 44px; bottom: 40px; display: flex; gap: 22px; align-items: flex-start; max-width: 600px;
-  transition: opacity 1.2s var(--suave), transform 1.2s var(--suave); }
+  transition: opacity 1.2s var(--suave), transform 1.2s var(--suave);
+  /* halo de tinta: la ficha se lee igual sobre salas claras (Luz, Señal, Plasmodio) */
+  text-shadow: 0 0 1px rgba(12, 11, 9, .5), 0 1px 3px rgba(12, 11, 9, .55), 0 0 22px rgba(12, 11, 9, .5); }
 #f-firma { flex: none; width: 52px; height: 52px; margin-top: 4px; color: var(--acento); opacity: .9; }
 .f-cab { font: 500 11px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--papel-2); display: flex; gap: 14px; }
 #f-num { color: var(--acento); }
@@ -45,19 +47,23 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 #f-origen { margin-top: 8px; font: 400 10.5px/1.3 var(--mono); letter-spacing: .06em; color: var(--papel-3); }
 #ficha.reposo { opacity: 0; transform: translateY(6px); }
 #hud.reposo #velo { opacity: 0; }
-#f-mini { position: absolute; left: 44px; bottom: 26px; font: 400 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
+#f-mini { position: absolute; left: 44px; bottom: 26px; text-shadow: 0 1px 3px rgba(12, 11, 9, .7); font: 400 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase;
   color: var(--papel-3); opacity: 0; transition: opacity 1.2s var(--suave); }
 #hud.reposo #f-mini { opacity: 1; }
 
-#instrumentos { position: absolute; right: 40px; top: 84px; width: 280px; font: 400 11px/1.75 var(--mono); color: var(--papel-2);
+#instrumentos { position: absolute; right: 40px; top: 84px; width: 280px; box-sizing: border-box; font: 400 11px/1.75 var(--mono); color: var(--papel-2);
   font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .4s; padding: 14px 16px; background: rgba(12, 11, 9, .55);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-top: 1px solid var(--acento); }
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-top: 1px solid var(--acento);
+  /* comparte el lado derecho con la ayuda: nunca se le encima (main.js pone --alto-mando) */
+  max-height: calc(100vh - 84px - 42px - var(--alto-mando, 0px)); overflow: hidden; }
+#instrumentos.recortado { -webkit-mask-image: linear-gradient(#000 calc(100% - 28px), transparent); mask-image: linear-gradient(#000 calc(100% - 28px), transparent); }
 #instrumentos.visible { opacity: 1; }
 #instrumentos .r { display: flex; justify-content: space-between; gap: 18px; white-space: nowrap; }
 #instrumentos .r b { font-weight: 400; color: var(--papel); }
-#instrumentos .g b { color: var(--acento); font-size: 13px; }
+#instrumentos .dest b { color: var(--acento); font-size: 13px; }
 #instrumentos .sep { height: 1px; background: var(--papel-4); margin: 6px 0; }
-#instrumentos .tit { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--papel-3); margin-bottom: 4px; }
+#instrumentos .tit { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--papel-3); margin-bottom: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 #mando { position: absolute; right: 28px; bottom: 28px; padding: 14px 16px; background: rgba(12, 11, 9, .78); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-top: 1px solid var(--acento); display: grid; grid-template-columns: auto auto; gap: 7px 14px; align-items: center;
   font: 400 11px/1.2 var(--mono); color: var(--papel-2); transition: opacity 1.2s var(--suave); text-align: right; }
@@ -117,15 +123,16 @@ canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: bloc
 #eq-barra { height: 1px; background: var(--papel-4); margin-top: 8px; overflow: hidden; transition: opacity .6s; }
 #eq-barra i { display: block; height: 100%; width: 0; background: var(--acento); transition: width .2s linear; }
 #a-equipo.listo #eq-barra { opacity: 0; }
-#a-indice { margin-top: 3.6vh; flex: 1; min-height: 0; }
+/* --compacto (1 → 0.56) lo baja antesala.js hasta que el índice quepa entero (14 salas en 800 px de alto) */
+#a-indice { margin-top: calc(3.6vh * var(--compacto, 1)); flex: 1; min-height: 0; }
 .acto { display: flex; gap: 12px; font: 500 10px/1 var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--papel-3);
-  margin: 2.2vh 0 .8vh; }
+  margin: calc(2.2vh * var(--compacto, 1)) 0 calc(.8vh * var(--compacto, 1)); }
 .acto:first-child { margin-top: 0; }
 .acto span { width: 26px; }
-.item { display: flex; align-items: baseline; gap: 12px; padding: .38vh 0; color: var(--papel-3); text-decoration: none; position: relative;
+.item { display: flex; align-items: baseline; gap: 12px; padding: calc(.38vh * var(--compacto, 1)) 0; color: var(--papel-3); text-decoration: none; position: relative;
   transition: color .25s; cursor: pointer; }
 .item .n { width: 26px; font: 400 11px/1 var(--mono); letter-spacing: .06em; transition: color .25s; }
-.item .t { font: 400 clamp(17px, 2.5vh, 26px)/1.05 var(--serif); letter-spacing: -.005em; transition: transform .35s var(--suave); }
+.item .t { font: 400 calc(clamp(17px, 2.5vh, 26px) * (.4 + .6 * var(--compacto, 1)))/1.05 var(--serif); letter-spacing: -.005em; transition: transform .35s var(--suave); }
 .item .o { margin-left: auto; padding-right: 2.4vw; font: 400 10px/1 var(--mono); letter-spacing: .06em; color: var(--papel-3); transition: color .25s; white-space: nowrap; }
 .item .o i { font-style: normal; color: var(--papel-4); }
 .item .o .est-perfecto { color: var(--papel-2); }
@@ -169,12 +176,16 @@ figcaption { margin-top: 30px; max-width: 64ch; }
 #pausa span { color: var(--papel); text-transform: uppercase; letter-spacing: .2em; margin-right: 10px; }
 #pausa.visible { opacity: 1; }
 
+/* una sala que no pudo arrancar: nota tranquila en el centro (en vez de un lienzo negro) */
+.fallo { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); max-width: 36ch; text-align: center; }
+.fallo p { margin: 12px 0 14px; font: italic 400 22px/1.35 var(--serif); color: var(--papel); }
+
 /* rótulos de salas (capa SVG/HTML que pinta cada sala) */
 .rotulo { font: 400 10.5px/1.3 var(--mono); letter-spacing: .08em; fill: var(--papel-2); color: var(--papel-2); }
 .rotulo-t { font: 500 10px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; fill: var(--papel-3); color: var(--papel-3); }
 
 @media (max-width: 1100px) {
-  #f-nombre { font-size: 36px; } #p-nombre { font-size: 64px; } .item .t { font-size: 21px; }
+  #f-nombre { font-size: 36px; } #p-nombre { font-size: 64px; } .item .t { font-size: calc(21px * (.4 + .6 * var(--compacto, 1))); }
 }
 
 

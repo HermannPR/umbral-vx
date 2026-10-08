@@ -91,7 +91,8 @@ export class Post {
       const tex = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
       this.levels.push({ tex, view: tex.createView(), w, h });
     }
-    const ub = (data) => { const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(b, 0, new Float32Array(data)); return b; };
+    this.ubs = [];      // uniformes de cada nivel: se destruyen con el post (antes quedaban vivos en cada cambio de tamaño)
+    const ub = (data) => { const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(b, 0, new Float32Array(data)); this.ubs.push(b); return b; };
     this.downBG = []; this.upBG = [];
     let srcView = this.hdrView, sw = W, sh = H;
     for (let i = 0; i < this.levels.length; i++) {
@@ -122,5 +123,5 @@ export class Post {
     this.device.queue.writeBuffer(this.compU, 0, new Float32Array([exposure, bloom / n, vignette, time % 100, ...lift, grain]));
     this.pass(enc, outView, this.pComp, this.compBG, false);
   }
-  destroy() { this.hdr.destroy(); this.levels.forEach((l) => l.tex.destroy()); }
+  destroy() { this.hdr.destroy(); this.levels.forEach((l) => l.tex.destroy()); this.ubs.forEach((b) => b.destroy()); this.compU.destroy(); }
 }

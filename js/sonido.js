@@ -19,6 +19,11 @@ export class Sonido {
   }
   // El contexto se crea perezosamente (el kiosco permite autoplay; en otro navegador espera un gesto).
   iniciar() {
+    // En la web (fuera de 127.0.0.1 / localhost) el navegador no deja sonar sin un gesto y avisa en la consola por cada
+    // intento: se espera a la primera tecla o clic. En el kiosco local (autoplay permitido) arranca al abrir, como siempre.
+    const local = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+    const gesto = !navigator.userActivation || navigator.userActivation.hasBeenActive;
+    if (!local && !gesto) return;
     if (this.ac) { if (this.ac.state === 'suspended' && !this.pausado) this.ac.resume().catch(() => {}); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;

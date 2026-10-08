@@ -136,7 +136,8 @@ export default class Remix {
     // número de partículas
     const trig = inp.r2 - inp.l2;
     if (Math.abs(trig) > 0.05) { this.manual = true; this.tgt = Math.max(1 << 18, Math.min(this.MAX, (this.tgt || this.N) + trig * dt * 2.5e6)); this.N = Math.round(this.tgt / 65536) * 65536; this.gov.value = this.N; }
-    else { this.tgt = this.N; if (!this.manual && this.age > 2 && this.age < 16 && this.gov.update(dt, this.ctx.perf.gpuMs ?? this.ctx.perf.frameMs)) { this.N = this.gov.value; try { localStorage.setItem('lab.remixN', this.N); } catch {} } }
+    // el gobernador baja la carga desde el primer medio segundo si el cuadro se pasa (antes esperaba 2 s: ~1.5 s a 53 fps al entrar)
+    else { this.tgt = this.N; const msG = this.ctx.perf.gpuMs ?? this.ctx.perf.frameMs; if (!this.manual && this.age < 16 && (this.age > 2 || (this.age > 0.6 && msG > this.gov.highMs)) && this.gov.update(dt, msG)) { this.N = this.gov.value; try { localStorage.setItem('lab.remixN', this.N); } catch {} } }
     if (this.N > this.clearN) { // partículas nuevas: vida 0 → renacen en el shader
       d.queue.writeBuffer(this.pt, this.clearN * 16, new Float32Array((this.N - this.clearN) * 4)); this.clearN = this.N;
     }

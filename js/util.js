@@ -84,3 +84,30 @@ export class Governor {
     return this.value !== old;
   }
 }
+
+// Dónde dibujar la figura principal de una sala plana (placa, mapa, plano de la ciudad) sin pisar la ficha de abajo a
+// la izquierda. Devuelve {x, y, w, h} en px CSS: el rectángulo más grande de proporción `aspecto` (ancho / alto) que cabe
+// arriba del texto de la ficha o a su derecha, con espacio para rótulos (extraIzq, extraAbajo) y sin pasar de maxW × maxH.
+// centroX (fracción de la ventana) es dónde se quiere su centro; se corre lo justo para no pisar la ficha.
+// soloArriba: nunca a la derecha de la ficha (Péndulos necesita ese lado libre para su péndulo testigo).
+export function zonaLibre(aspecto, { arriba = 64, abajo = 40, izq = 44, der = 40, extraIzq = 0, extraAbajo = 0, maxW = Infinity, maxH = Infinity, centroX = 0.5, soloArriba = false } = {}) {
+  const W = innerWidth, H = innerHeight;
+  // el borde real del texto de la ficha (sus líneas), no su caja: la caja mide 600 px aunque el texto sea más corto
+  let fTop = H - abajo, fDer = izq;
+  const f = typeof document !== 'undefined' && document.getElementById('ficha');
+  if (f) {
+    const rg = document.createRange(); rg.selectNodeContents(f);
+    const rs = [...rg.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+    const fs = f.querySelector('#f-firma'); if (fs) rs.push(fs.getBoundingClientRect());
+    if (rs.length) { fTop = Math.min(...rs.map((r) => r.top)) - 18; fDer = Math.max(...rs.map((r) => r.right)) + 28; }
+  }
+  const caja = (x0, y0, x1, y1) => {
+    const ax = x0 + extraIzq, aw = x1 - ax, ah = y1 - y0 - extraAbajo;
+    const w = Math.max(0, Math.min(aw, ah * aspecto, maxW, maxH * aspecto)), h = w / aspecto;
+    return { w, h, x: Math.min(Math.max(W * centroX - w / 2, ax), x1 - w), y: y0 + (ah - h) / 2 };
+  };
+  const A = caja(izq, arriba, W - der, Math.min(H - abajo, fTop));        // arriba de la ficha, a todo lo ancho
+  const B = caja(Math.max(izq, fDer), arriba, W - der, H - abajo);        // a la derecha de la ficha, a todo lo alto
+  const z = !soloArriba && B.w * B.h > A.w * A.h ? B : A;
+  return { x: Math.round(z.x), y: Math.round(z.y), w: Math.round(z.w), h: Math.round(z.h) };
+}

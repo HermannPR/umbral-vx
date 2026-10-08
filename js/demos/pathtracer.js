@@ -195,8 +195,9 @@ export default class PathTracer {
     this.shotT += dt;
     const moving = Math.abs(inp.lx) + Math.abs(inp.ly) + Math.abs(inp.rx) + Math.abs(inp.ry) > 0.05;
     const trig = inp.r2 - inp.l2;
-    if (this.pedirToma) { this.pedirToma = false; inp.pressed.a = true; }
-    if (inp.pressed.a || (this.shotT > 15 && !moving)) { this.shot = (this.shot + 1) % SHOTS.length; this.shotT = 0; this.camOff = { az: 0, el: 0, d: 1, yaw: 0, pitch: 0 }; this.reset = true; }
+    // ↑ ↓ (cambiarModo) ya fijó la toma; A y el reloj de 15 s pasan a la siguiente
+    if (inp.pressed.a || (this.shotT > 15 && !moving)) { this.shot = (this.shot + 1) % SHOTS.length; this.pedirToma = true; }
+    if (this.pedirToma) { this.pedirToma = false; this.shotT = 0; this.camOff = { az: 0, el: 0, d: 1, yaw: 0, pitch: 0 }; this.reset = true; }
     if (moving) {
       const o = this.camOff; this.shotT = 0;
       o.az += inp.lx * dt * 0.8; o.d = Math.max(0.35, Math.min(2.2, o.d * Math.exp(inp.ly * dt)));
@@ -231,7 +232,8 @@ export default class PathTracer {
   }
   after() { this.cnt.after(); }
   nombreModo() { return 'toma ' + ((this.shot || 0) + 1) + ' de ' + SHOTS.length; }
-  cambiarModo(dir) { this.shot = ((this.shot || 0) + dir - 1 + SHOTS.length) % SHOTS.length; this.pedirToma = true; return 'toma ' + (((this.shot + 1) % SHOTS.length) + 1) + ' de ' + SHOTS.length; }
+  // la toma cambia ya (no en el siguiente cuadro): así la ayuda y el aviso muestran la misma
+  cambiarModo(dir) { this.shot = ((this.shot || 0) + dir + SHOTS.length) % SHOTS.length; this.pedirToma = true; return this.nombreModo(); }
   stats() {
     const fps = this.ctx.perf.fps, px = this.W * this.H, rays = this.cnt.values ? this.cnt.values[0] : 0;
     return [

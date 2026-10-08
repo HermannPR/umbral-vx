@@ -311,7 +311,7 @@ export default class Senal {
     this.nivel = 0.85; this.nivelObj = 0.85; this.sobre = 0; this.holgura = 0; this.enfr = 0; this.lento = 0;
     this.fracPrev = [this.esc, this.esc]; this.cabeza = 0; this.ultKick = -1; this.ultDrop = -1; this.semilla = 0;
     this.onda = new Float32Array(256); this.tdom = new Float32Array(1024);
-    this.chaosPrev = this.chaos; this.vivoTxt = ''; this.calTxt = ''; this.calT = 0;
+    this.vivoTxt = ''; this.calTxt = ''; this.calT = 0;
     this.estiloI = 0; this.i = 0;
     this.ponerEstilo(0);
     const yo = this;
@@ -375,6 +375,8 @@ export default class Senal {
     else r[k] = v * (dir > 0 ? 1.12 : 1 / 1.12);
     this.codigo();
   }
+  // C / Y: siguiente parche (main.js anuncia lo que devuelve)
+  accionY() { this.cargar(this.i + 1); this.codigo(); return 'Parche · ' + this.P.nombre; }
   // ↑ ↓ cambian de estilo musical; la música cambia en el siguiente tiempo
   nombreModo() { return SENAL_ESTILOS[this.estiloI].nombre; }
   cambiarModo(dir) { this.ponerEstilo(this.estiloI + dir); this.ultNav = performance.now(); return this.nombreModo(); }
@@ -420,10 +422,6 @@ export default class Senal {
     this.edad += dt;
     this.gobernar(dt);
     if (inp.pressed.a) this.saltar();
-    if (this.chaos !== this.chaosPrev) {   // Y / C: siguiente parche (main.js lo anuncia como alternancia; aquí se corrige el aviso)
-      this.chaosPrev = this.chaos; this.cargar(this.i + 1); this.codigo();
-      const av = document.getElementById('aviso'); if (av) av.textContent = 'Parche · ' + this.P.nombre;
-    }
     if (this.palette !== this.palPrev) { this.palPrev = this.palette; this.codigo(); }
     if (now - this.ultNav > 170) {
       if (inp.ly < -0.6) { this.linea = (this.linea - 1 + this.nLineas) % this.nLineas; this.ultNav = now; this.codigo(); }
