@@ -185,6 +185,65 @@ const RESOLVE = FS_VERT + /* wgsl */`
 }
 `;
 
+// ---------- modo grabación del mapa de volteo (opt-in: window.__pendRec; ver frameRec) ----------
+// Malla propia a la resolución del lienzo × ss² (supermuestreo), ventana 16:9 en el plano (θ₁, θ₂), sin cursor, sin testigo.
+const REC = COMUN + /* wgsl */`
+struct R {
+  a: vec4f,   // W, H, ss, h
+  b: vec4f,   // centro θ₁, centro θ₂, medio alto de la ventana (rad), pasos de este despacho
+  c: vec4f,   // tiempo simulado al empezar el despacho, reiniciar, paleta, aparición (fracción de f)
+  d: vec4f,   // brillo, gris, tiempo simulado actual, 0
+};
+@group(0) @binding(0) var<uniform> r: R;
+@group(0) @binding(1) var<storage, read_write> est: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> vol: array<f32>;
+@compute @workgroup_size(16, 16)
+fn paso(@builtin(global_invocation_id) id: vec3u) {
+  let SW = u32(r.a.x * r.a.z); let SH = u32(r.a.y * r.a.z);
+  if (id.x >= SW || id.y >= SH) { return; }
+  let i = id.y * SW + id.x;
+  var s = est[i];
+  if (r.c.y > 0.5) {
+    let px = (vec2f(id.xy) + 0.5) / r.a.z - 0.5 * r.a.xy;
+    let k = 2.0 * r.b.z / r.a.y;
+    s = vec4f(r.b.x + px.x * k, r.b.y - px.y * k, 0.0, 0.0);
+    vol[i] = -1.0;
+  }
+  if (vol[i] < 0.0) {
+    let h = r.a.w;
+    for (var k = 0u; k < u32(r.b.w); k++) {
+      s = rk4(s, h);
+      if (abs(s.x) > 3.14159265 || abs(s.y) > 3.14159265) { vol[i] = r.c.x + f32(k + 1u) * h; break; }
+    }
+    est[i] = s;
+  }
+}
+`;
+const REC_MAPA = FS_VERT + COMUN + /* wgsl */`
+struct R { a: vec4f, b: vec4f, c: vec4f, d: vec4f };
+@group(0) @binding(0) var<uniform> r: R;
+@group(0) @binding(1) var<storage, read> est: array<vec4f>;
+@group(0) @binding(2) var<storage, read> vol: array<f32>;
+@fragment fn fs(i: VO) -> @location(0) vec4f {
+  let ss = u32(r.a.z); let SW = u32(r.a.x) * ss;
+  let p = vec2u(i.pos.xy);
+  var acc = vec3f(0.0);
+  for (var y = 0u; y < ss; y++) { for (var x = 0u; x < ss; x++) {
+    let k = (p.y * ss + y) * SW + p.x * ss + x;
+    let f = vol[k]; let s = est[k];
+    let gris = (vec3f(0.018, 0.017, 0.015) + vec3f(0.03, 0.029, 0.025) * (0.5 + 0.5 * cos(s.y))) * r.d.y;
+    var col = gris;
+    if (f >= 0.0) {
+      let t = clamp(log2(1.0 + f) / log2(1.0 + 40.0), 0.0, 1.0);
+      let c = paleta(1.0 - t, r.c.z) * mix(0.62, 0.1, t);
+      col = mix(gris, c, smoothstep(0.0, r.c.w * f + 0.02, r.d.z - f));   // el punto aparece suave, no de golpe
+    }
+    acc += col;
+  } }
+  return vec4f(acc / f32(ss * ss) * r.d.x, 1.0);
+}
+`;
+
 const VISTAS = ['Abanico', 'Mapa de volteo', 'Rotor pateado'];
 
 export default class Pendulos {
@@ -255,6 +314,7 @@ export default class Pendulos {
   nombreModo() { return VISTAS[this.vista]; }
   cambiarModo(dir) { this.vista = (this.vista + dir + 3) % 3; this.vistaT = 0; this.primero = true; this.rotulo(); this.ctx.sonido.evento('a'); return this.nombreModo(); }
   frame(enc, dt, t) {
+    if (window.__pendRec && window.__pendRec.estado) { this.frameRec(enc, window.__pendRec); return; }
     const d = this.ctx.device, inp = this.ctx.input, W = this.ctx.W, H = this.ctx.H;
     this.vistaT += dt;
     if (this.ctx.recorrido && this.vistaT > 15) this.cambiarModo(1);
@@ -315,6 +375,53 @@ export default class Pendulos {
     }
     this.primero = false;
   }
+
+  // ---------- modo grabación (herramientas/showcase/tomas-v3.mjs) ----------
+  // Solo existe si la página define window.__pendRec; en uso normal nunca se toca. Graba la vista II (mapa de volteo)
+  // llenando el lienzo 16:9 entero: sin rótulo, sin ejes ni marco, sin cursor ni péndulo testigo.
+  //   __pendRec = { estado() → { T (tiempo simulado objetivo, s), cx, cy, alto (ventana: centro y medio alto en rad),
+  //     paleta?, brillo?, gris?, aparicion? }, ss (supermuestreo por eje, 2 → 4 péndulos por píxel), maxPasos (por cuadro),
+  //     exposicion, bloom, vineta, grano (0), negros ([0,0,0]) }
+  // La física es la misma (RK4, h = 1/240 s); el volteo se fecha paso a paso. Si T está a más de maxPasos de distancia,
+  // avanza lo que puede y deja R.listo = false (el guion repite el cuadro sin capturar hasta que R.listo sea true).
+  frameRec(enc, R) {
+    const d = this.ctx.device, W = this.ctx.W, H = this.ctx.H, st = R.estado();
+    const ss = Math.max(1, R.ss | 0 || 1), h = 1 / 240;
+    Object.assign(this.post, { exposure: R.exposicion != null ? R.exposicion : 1, bloom: R.bloom != null ? R.bloom : 0.12,
+      vignette: R.vineta != null ? R.vineta : 0.3, grain: R.grano || 0, lift: R.negros || [0, 0, 0] });
+    if (this.vista !== 1) { this.vista = 1; this.sonido.vista = 1; }
+    if (this.ctx.capa.innerHTML) this.ctx.capa.innerHTML = '';
+    const clave = [W, H, ss, st.cx, st.cy, st.alto].join(',');
+    if (!this.rec || this.rec.clave !== clave || st.T < this.rec.T - h) {   // tolerancia h: el redondeo a pasos puede dejar S.T medio paso por delante
+      if (this.rec) { this.rec.est.destroy(); this.rec.vol.destroy(); this.rec.u.destroy(); }
+      const n = W * ss * H * ss, B = (b) => ({ buffer: b });
+      const est = U.storage(d, n * 16), vol = U.storage(d, n * 4), u = U.uniform(d, 64);
+      if (!this.pRec) {
+        this.pRec = d.createComputePipeline({ layout: 'auto', compute: { module: makeShader(d, REC, 'pendulos-rec', this.ctx.report), entryPoint: 'paso' } });
+        const mm = makeShader(d, REC_MAPA, 'pendulos-rec-mapa', this.ctx.report);
+        this.pRecMapa = d.createRenderPipeline({ layout: 'auto', vertex: { module: mm, entryPoint: 'vs' }, fragment: { module: mm, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] } });
+      }
+      this.rec = { clave, est, vol, u, T: 0, nuevo: true,
+        bgP: d.createBindGroup({ layout: this.pRec.getBindGroupLayout(0), entries: [{ binding: 0, resource: B(u) }, { binding: 1, resource: B(est) }, { binding: 2, resource: B(vol) }] }),
+        bgM: d.createBindGroup({ layout: this.pRecMapa.getBindGroupLayout(0), entries: [{ binding: 0, resource: B(u) }, { binding: 1, resource: B(est) }, { binding: 2, resource: B(vol) }] }) };
+    }
+    const S = this.rec, falta = Math.round((st.T - S.T) / h), n = Math.min(falta, R.maxPasos || 240);
+    const uni = (pasos, T0, nuevo) => new Float32Array([W, H, ss, h, st.cx, st.cy, st.alto, pasos, T0, nuevo ? 1 : 0, st.paleta != null ? st.paleta : 1,
+      st.aparicion != null ? st.aparicion : 0.06, st.brillo != null ? st.brillo : 1, st.gris != null ? st.gris : 1, S.T, 0]);
+    // despachos de ≤ 24 pasos, cada uno en su propio envío (el uniforme cambia entre ellos y no hay que pasar el vigilante de la GPU)
+    for (let hecho = 0; hecho < n || S.nuevo; ) {
+      const k = Math.min(24, n - hecho), e = d.createCommandEncoder();
+      d.queue.writeBuffer(S.u, 0, uni(k, S.T, S.nuevo));
+      const cp = e.beginComputePass(); cp.setPipeline(this.pRec); cp.setBindGroup(0, S.bgP);
+      cp.dispatchWorkgroups(Math.ceil(W * ss / 16), Math.ceil(H * ss / 16)); cp.end();
+      d.queue.submit([e.finish()]);
+      S.T += k * h; hecho += k; S.nuevo = false;
+    }
+    R.listo = n === falta;
+    d.queue.writeBuffer(S.u, 0, uni(0, S.T, false));
+    const rp = this.ctx.rpass(enc, { colorAttachments: [{ view: this.ctx.post.hdrView, loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
+    rp.setPipeline(this.pRecMapa); rp.setBindGroup(0, S.bgM); rp.draw(3); rp.end();
+  }
   after() {
     this.cnt.after();
     if (this.vista === 1 && this.cnt.values) { this.flips = this.cnt.values[0]; this.sonido.actividad = Math.min(1, this.flips / (this.G * this.G * 0.0015)); }
@@ -360,6 +467,7 @@ export default class Pendulos {
   }
   destroy() {
     [this.fan, this.mapa, this.volteo, this.rotor, this.acc, this.u, this.ru, this.uno, this.uU].forEach((b) => b.destroy());
+    if (this.rec) { this.rec.est.destroy(); this.rec.vol.destroy(); this.rec.u.destroy(); this.rec = null; }
     this.cnt.destroy(); this.ctx.capa.innerHTML = '';
   }
 }

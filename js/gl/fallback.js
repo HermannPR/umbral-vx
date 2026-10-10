@@ -1,6 +1,7 @@
 // Modo de respaldo WebGL2: las 7 salas reimplementadas con shaders de fragmentos y texturas ping-pong.
 import { VS, program, target, upload, freeTarget, pass, setU, TONEMAP } from './glcore.js';
 import { m4, v3, fmt } from '../util.js';
+import GalvanizadoGL, { MODOS_GALV } from './galvanizado.js';
 
 const HDR = `#version 300 es
 precision highp float; precision highp int;
@@ -21,6 +22,7 @@ float rnd(inout uint s) { s = pcg(s); return float(s) * (1.0 / 4294967296.0); }`
 const FRACTAL_FS = HDR + PAL + `
 uniform vec3 pos, fwd, right, up; uniform vec4 prm; uniform vec2 res; uniform float pal, boxS;
 out vec4 o;
+vec3 fpal(float t){return pal>3.5?vec3(.55):cpal(t,pal);}
 vec2 deBulb(vec3 p) {
   vec3 w = p; float m = dot(w, w), dz = 1.0, trap = 1e9;
   for (int i = 0; i < 6; i++) {
@@ -61,7 +63,7 @@ void main() {
   }
   vec3 L = normalize(vec3(cos(prm.x * 0.12) * 0.7 + 0.2, 0.75, sin(prm.x * 0.12) * 0.7 - 0.3));
   float gl = float(steps) / 140.0;
-  vec3 bg = mix(vec3(0.012, 0.014, 0.03), vec3(0.05, 0.03, 0.08), clamp(0.5 - uv.y, 0.0, 1.0)) + cpal(0.65, pal) * gl * gl * 1.4;
+  vec3 bg = mix(vec3(0.012, 0.014, 0.03), vec3(0.05, 0.03, 0.08), clamp(0.5 - uv.y, 0.0, 1.0)) + fpal(0.65) * gl * gl * 1.4;
   vec3 col = bg;
   if (hit) {
     vec3 p = ro + rd * t; float e = eps * 0.5; vec2 k = vec2(1, -1);
@@ -73,25 +75,27 @@ void main() {
     for (int j = 1; j <= 4; j++) { float hh = (0.006 + 0.055 * float(j)) * ws; ao += (hh - map(p + n * hh).x) * sc; sc *= 0.7; }
     ao = clamp(1.0 - 2.2 * ao / ws, 0.0, 1.0);
     float tc = isBox ? log(trap + 1.0) * 0.6 : sqrt(trap);
-    vec3 alb = cpal(tc * 0.9 + prm.x * 0.015, pal);
+    vec3 alb = fpal(tc * 0.9 + prm.x * 0.015);
     float dif = max(dot(n, L), 0.0) * sh, sky = 0.5 + 0.5 * n.y;
     float spe = pow(max(dot(reflect(rd, n), L), 0.0), 40.0) * sh, fre = pow(clamp(1.0 + dot(n, rd), 0.0, 1.0), 3.0);
     vec3 lin = dif * vec3(2.4, 2.0, 1.6) + sky * vec3(0.22, 0.3, 0.45) * ao + fre * vec3(0.5, 0.6, 0.9) * ao;
     col = alb * lin * (0.35 + 0.65 * ao) + spe * vec3(3.0, 2.6, 2.2);
+    if(pal>3.5){col=vec3(dot(lin*(.35+.65*ao),vec3(.2126,.7152,.0722))*.32);}
     col = mix(col, bg, 1.0 - exp(-t * 0.05 / ws));
   }
   o = vec4(min(col, vec3(30.0)), float(steps));
 }`;
 
 class GLFractal {
-  static palettes = ['Ámbar', 'Glaciar', 'Neón', 'Obsidiana'];
+  static palettes = ['Ámbar', 'Glaciar', 'Neón', 'Obsidiana', ...MODOS_GALV];
+  static paletaInicial = 4;
   static controls = { ls: 'volar', rs: 'mirar', trig: '− / + escala del Mandelbox', a: 'cambiar Mandelbulb ⇄ Mandelbox' };
   static info = { title: 'Fractal 3D en tiempo real', short: 'Raymarching (WebGL2)', desc: 'Raymarching por píxel del Mandelbulb / Mandelbox con sombras suaves y oclusión ambiental (modo WebGL2).' };
   constructor(ctx, out) { this.ctx = ctx; this.out = out || ctx.hdr; }
-  init() { this.prog = program(this.ctx.gl, VS, FRACTAL_FS, this.ctx.report, 'fractal'); this.mode = 0; this.boxS = 2; this.tt = 0; this.yaw = 0; this.pitch = 0; this.dist = 1; }
+  init() { this.prog = program(this.ctx.gl, VS, FRACTAL_FS, this.ctx.report, 'fractal'); this.grado = new GalvanizadoGL(this.ctx.gl,this.out,this.ctx.report); this.mode = 0; this.boxS = 2; this.tt = 0; this.colorT = 0; this.yaw = 0; this.pitch = 0; this.dist = 1; }
   frame(dt, t) {
     const inp = this.ctx.input, gl = this.ctx.gl;
-    this.tt += dt * (this.chaos ? 2.5 : 1);
+    this.tt += dt * (this.chaos ? 2.5 : 1); this.colorT += dt;
     if (inp.pressed.a) this.mode ^= 1;
     this.boxS = Math.max(1.5, Math.min(3.2, this.boxS + (inp.r2 - inp.l2) * dt * 0.5));
     this.yaw += (inp.rx + inp.lx) * dt; this.pitch = Math.max(-1, Math.min(1, this.pitch - inp.ry * dt)); this.dist = Math.max(0.5, Math.min(1.8, this.dist * Math.exp(inp.ly * dt)));
@@ -99,10 +103,11 @@ class GLFractal {
     const el = 0.45 * Math.sin(this.tt * 0.05) + this.pitch;
     const pos = [Math.cos(a) * R * Math.cos(el), Math.sin(el) * R, Math.sin(a) * R * Math.cos(el)];
     const fwd = v3.norm(v3.mul(pos, -1)), right = v3.norm(v3.cross(fwd, [0, 1, 0])), up = v3.cross(right, fwd);
-    pass(gl, this.prog, this.out, { pos, fwd, right, up, prm: [this.tt, this.mode, 8, 0], res: [this.out.w, this.out.h], pal: this.palette || 0, boxS: this.boxS });
+    pass(gl, this.prog, this.palette >= 4 ? this.grado.raw : this.out, { pos, fwd, right, up, prm: [this.tt, this.mode, 8, 0], res: [this.out.w, this.out.h], pal: this.palette || 0, boxS: this.boxS });
+    if(this.palette >= 4) this.grado.run(this.palette,this.colorT);
   }
   stats() { const px = this.out.w * this.out.h; return [['fractal', this.mode ? 'Mandelbox' : 'Mandelbulb'], ['píxeles trazados', fmt.int(px), true], ['pasos máx / rayo', '140']]; }
-  destroy() { this.ctx.gl.deleteProgram(this.prog.p); }
+  destroy() { this.ctx.gl.deleteProgram(this.prog.p); this.grado.destroy(); }
 }
 
 // ---------------- Sala 3: reacción-difusión ----------------

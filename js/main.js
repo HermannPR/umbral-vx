@@ -92,7 +92,7 @@ async function boot() {
   const gpu = params.get('webgl') == null ? await initWebGPU(report).catch((e) => { report(e.message); return null; }) : null;
   gpuRef = gpu;
   // si la GPU se pierde a media visita (el proceso de la GPU se reinició), se recarga sola una o dos veces; si insiste, la página amable
-  if (gpu) gpu.device.lost.then((info) => { if (info.reason !== 'destroyed') perdidaGPU(info.message || 'dispositivo perdido'); });
+  if (gpu) vigilarPerdida(gpu);
   let gl = null, rendererGL = '';
   if (!gpu) {
     gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
@@ -169,7 +169,8 @@ const GOBERNADOR = (!TEST && !navigator.webdriver) || params.has('gobernador');
 const ajuste = {};
 let gobLento = 0;
 function gobernarCalidad(rawDt) {
-  if (!GOBERNADOR || calidadManual !== null || ocupado || !ctx.calidad || ctx.api !== 'webgpu' || ctx.calidad.nivel === 0 || salaT < 4) { gobLento = 0; return; }
+  // las salas que regulan su propia carga (el Mandelbrot profundo refina con presupuesto) no se rehacen desde aquí
+  if (!GOBERNADOR || calidadManual !== null || ocupado || !current || current.autoRegula || !ctx.calidad || ctx.api !== 'webgpu' || ctx.calidad.nivel === 0 || salaT < 4) { gobLento = 0; return; }
   const presupuesto = 1000 / Math.min(FPS_MAX, 60);
   if (rawDt * 1000 > 250) return;                                  // un tirón aislado (cambio de app) no cuenta
   if (perf.frameMs > presupuesto * 1.5) gobLento += rawDt; else gobLento = Math.max(0, gobLento - rawDt * 0.5);
@@ -178,15 +179,53 @@ function gobernarCalidad(rawDt) {
   ajuste[idx] = ctx.calidad.nivel - 1;
   aviso('Calidad ajustada · ' + CALIDADES[ajuste[idx]].nombre);
   log({ type: 'gobernador', sala: idx + 1, nivel: ajuste[idx], fps: +perf.fps.toFixed(1) });
-  entrar(idx, true);
+  rehacerSala();                  // sin portada y en el mismo lugar
 }
 
-function perdidaGPU(msg) {
-  let n = 0;
-  try { const r = JSON.parse(sessionStorage.getItem('umbral.perdida') || '{}'); n = Date.now() - (r.t || 0) < 60000 ? r.n || 0 : 0; sessionStorage.setItem('umbral.perdida', JSON.stringify({ t: Date.now(), n: n + 1 })); } catch {}
-  log({ type: 'gpu-perdida', msg, n });
-  if (n < 2) { aviso('La GPU se reinició · volviendo a cargar'); setTimeout(() => location.reload(), 1600); }
-  else sinGPU('la GPU se perdió varias veces seguidas: ' + msg);
+// GPU perdida (el proceso de la GPU se reinició, memoria, vigilante): se pide otro dispositivo en silencio y la sala
+// se rehace en el mismo lugar, sin portada. Solo si se pierde 3 veces en un minuto, la página amable sin GPU.
+let perdidas = [], recuperando = false, simulandoPerdida = false;
+async function perdidaGPU(msg) {
+  const ahora = Date.now();
+  perdidas = perdidas.filter((t) => ahora - t < 60000); perdidas.push(ahora);
+  log({ type: 'gpu-perdida', msg, n: perdidas.length });
+  if (perdidas.length >= 3) { sinGPU('la GPU se perdió varias veces seguidas: ' + msg); return; }
+  if (recuperando) return;
+  recuperando = true;
+  const vista = current && current.guardarVista ? (() => { try { return current.guardarVista(); } catch { return null; } })() : null;
+  const i = idx, enSala = modo === 'sala';
+  if (current) { try { current.destroy(); } catch {} current = null; }
+  try {
+    const gpu = await initWebGPU(report);
+    gpuRef = gpu;
+    vigilarPerdida(gpu);
+    ctx.device = gpu.device; ctx.features = gpu.features;
+    ctx.context.configure({ device: gpu.device, format: ctx.format, alphaMode: 'opaque' });
+    if (ctx.post) { try { ctx.post.destroy(); } catch {} }
+    ctx.post = new Post(gpu.device, ctx.format, ctx.W, ctx.H); ctx.post.rpass = rpass;
+    ts = null; setupTimestamps(gpu);
+    recuperando = false; ocupado = false;
+    aviso('La GPU se reinició · sigo donde estabas');
+    if (i >= 0) { if (enSala) await entrar(i, true, { silencioso: true, vista }); else { vistaPendiente = vista; reconstruir = true; } }
+  } catch (e) {
+    recuperando = false;
+    report('recuperar GPU: ' + (e.message || e));
+    sinGPU('la GPU se perdió y no volvió: ' + msg);
+  }
+}
+function vigilarPerdida(gpu) {
+  gpu.device.lost.then((info) => {
+    if (info.reason === 'destroyed' && !simulandoPerdida) return;
+    simulandoPerdida = false;
+    perdidaGPU(info.message || 'dispositivo perdido');
+  });
+}
+// rehace la sala actual sin portada, conservando la vista (cambio de tamaño, gobernador)
+let vistaPendiente = null;
+function rehacerSala() {
+  if (idx < 0) return;
+  const vista = current && current.guardarVista ? (() => { try { return current.guardarVista(); } catch { return null; } })() : null;
+  return entrar(idx, true, { silencioso: true, vista });
 }
 
 // ---------- sin GPU: página amable con el video y las láminas ----------
@@ -225,14 +264,15 @@ const cpass = (enc, desc = {}) => enc.beginComputePass({ ...desc, ...tsWrites() 
 const rpass = (enc, desc) => enc.beginRenderPass({ ...desc, ...tsWrites() });
 
 // ---------- salas ----------
-async function entrar(i, primera = false) {
+async function entrar(i, primera = false, op = {}) {
   if (ocupado || !ctx) return;
+  const sil = !!op.silencioso;    // rehacer la misma sala: sin portada, sin pausas, conservando la vista
   i = (i + SALAS.length) % SALAS.length;
   if (!disponible(i)) { aviso('No disponible en este equipo · ' + (evals[i] ? evals[i].motivo : '')); return; }
   ocupado = true;
   const S = SALAS[i], t0 = performance.now();
-  mostrarPortada(i, primera);
-  if (!primera) await espera(400);
+  if (!sil) mostrarPortada(i, primera);
+  if (!primera && !sil) await espera(400);
   antesala && antesala.ocultar();
   if (current) { try { current.destroy(); } catch (e) { report(e.message); } current = null; }
   $('capa').innerHTML = '';
@@ -243,15 +283,18 @@ async function entrar(i, primera = false) {
   if (ctx.api === 'webgpu') aplicarTamaño();
   document.documentElement.style.setProperty('--acento', S.acento);
   // pausa: una sala nueva siempre arranca andando (y con sonido, aunque la anterior estuviera en pausa)
-  pausaSala = false; mostrarPausa();
-  if (sonido.pausado && !pausado) sonido.reanudar();
-  sonido.partitura(S.slug);
+  if (!sil) {
+    pausaSala = false; mostrarPausa();
+    if (sonido.pausado && !pausado) sonido.reanudar();
+    sonido.partitura(S.slug);
+  }
   llenarFicha(i);                 // antes de init: las salas que se acomodan alrededor de la ficha la miden ya con su texto
   try {
     const D = await claseDe(i);
     const d = new D(ctx);
-    d.palette = 0; d.chaos = false; d.sala = S;
+    d.palette = D.paletaInicial || 0; d.chaos = false; d.sala = S;
     await d.init();
+    if (op.vista && d.restaurarVista) { try { await d.restaurarVista(op.vista); } catch (e) { report('restaurar vista: ' + e.message); } }
     if (ctx.device) await ctx.device.queue.onSubmittedWorkDone();
     current = d;
   } catch (e) {
@@ -265,9 +308,11 @@ async function entrar(i, primera = false) {
   framesSala = 0;
   despertar();
   log({ type: 'enter', sala: i + 1, slug: S.slug });
-  await espera(Math.max(0, (primera ? 1500 : 1700) - (performance.now() - t0)));
-  ocultarPortada();
-  mostrarAyuda(3200);
+  if (!sil) {
+    await espera(Math.max(0, (primera ? 1500 : 1700) - (performance.now() - t0)));
+    ocultarPortada();
+    mostrarAyuda(3200);
+  }
   ocupado = false;
 }
 
@@ -370,7 +415,8 @@ function abrirAntesala() {
 function cerrarAntesala() {
   if (!current) return;
   // si cambió la calidad o el tamaño de la ventana mientras estaba la antesala, la sala se rehace (con su portada)
-  if (reconstruir || nivelPara(idx) !== ctx.calidad.nivel) return entrar(idx, true);
+  if (nivelPara(idx) !== ctx.calidad.nivel) return entrar(idx, true);
+  if (reconstruir) { const vista = vistaPendiente; vistaPendiente = null; return vista ? entrar(idx, true, { silencioso: true, vista }) : rehacerSala(); }
   antesala.ocultar(); modo = 'sala';
   document.documentElement.style.setProperty('--acento', SALAS[idx].acento);
   llenarFicha(idx);               // p. ej. «(manual)» si se fijó la calidad en la antesala
@@ -454,8 +500,8 @@ function redimensionar() {
   if (!ctx || (W === ctx.W && H === ctx.H)) return;
   canvas.width = W; canvas.height = H; ctx.W = W; ctx.H = H;
   if (ctx.post) { ctx.post.destroy(); ctx.post = new Post(ctx.device, ctx.format, W, H); ctx.post.rpass = rpass; }
-  if (current && modo === 'sala') { const i = idx; current.destroy(); current = null; idx = -1; entrar(i, true); }
-  else if (current) reconstruir = true;       // con la antesala abierta: se rehace al volver (sus búferes tienen el tamaño viejo)
+  if (current && modo === 'sala') rehacerSala();                 // sin portada y en el mismo lugar (antes volvía al inicio)
+  else if (current) { vistaPendiente = current.guardarVista ? current.guardarVista() : null; reconstruir = true; }       // con la antesala abierta: se rehace al volver (sus búferes tienen el tamaño viejo)
 }
 
 // ---------- pausa al perder el foco (no competir con un juego u otras apps) ----------
@@ -557,6 +603,7 @@ function actualizarGlifos() {
 }
 
 function dibujarDatos() {
+  if (!current) return;           // la sala se está rehaciendo
   if (nombreModo() !== modoMostrado) refrescarLeyenda();
   const rows = current.stats ? current.stats() : [];
   const big = rows.find((r) => r !== '-' && r[2]);
@@ -593,6 +640,8 @@ window.__lab = {
   hud(v) { $('hud').classList.toggle('oculto', !v); $('capa').style.visibility = v ? '' : 'hidden'; },
   despertar,
   pulsar(b) { input.inject = b; },
+  simularPerdidaGPU() { simulandoPerdida = true; ctx.device.destroy(); },
+  gobernar() { gobLento = 99; },
 };
 
 export { fmt };
