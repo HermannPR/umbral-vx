@@ -538,6 +538,7 @@ function frame(now) {
   else if (recorrido && salaT <= 12) despertar();
 
   gobernarCalidad(rawDt);
+  if (!current) return;           // el gobernador pudo rehacer la sala: entrar() ya la vació y la nueva aún no está lista
   hudT += rawDt; logT += rawDt;
   if (hudT > 0.25) { hudT = 0; dibujarDatos(); }
   if (logT > 3) {
