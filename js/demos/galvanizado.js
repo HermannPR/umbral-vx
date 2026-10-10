@@ -15,6 +15,9 @@ struct U { dim: vec4f, prm: vec4f };
 @group(0) @binding(2) var smp: sampler;
 @group(0) @binding(3) var dst: texture_storage_2d<rgba16float, write>;
 const W3 = vec3f(0.2126, 0.7152, 0.0722);
+// Curva filmica C (Hermann 10 oct 12:50): L' = (1-exp(-2.5 L))/(1-exp(-2.5)); negro fijo, altas luces suaves.
+// Se aplica a la luma lineal ANTES del promedio/blur (fase) y ANTES de gain/gamma; identica a --curva-c 2.5 del gradador.
+fn filmica(l: f32) -> f32 { return (1.0 - exp(-2.5 * clamp(l, 0.0, 1.0))) / (1.0 - exp(-2.5)); }
 `;
 const DOWN = COMMON + /* wgsl */`
 @compute @workgroup_size(8, 8)
@@ -25,8 +28,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   var ls = 0.0;
   for (var y = 0; y < 4; y++) { for (var x = 0; x < 4; x++) {
     let uv = (vec2f(id.xy) + (vec2f(f32(x), f32(y)) + 0.5) / 4.0) / vec2f(dim);
-    let l = dot(textureSampleLevel(src, smp, uv, 0.0).rgb, W3);
-    ls += sqrt(clamp(l, 0.0, 1.0));
+    let l = filmica(dot(textureSampleLevel(src, smp, uv, 0.0).rgb, W3));
+    ls += sqrt(l);
   } }
   textureStore(dst, id.xy, vec4f(ls / 16.0, 0.0, 0.0, 1.0));
 }`;
@@ -84,7 +87,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     unit = vec3f(1.0) + (unit - 1.0) * soft;
     fill = ring[base + 2u].rgb;
   }
-  let l = dot(raw.rgb, W3);
+  let l = filmica(dot(raw.rgb, W3));
   let lg = pow(clamp(l * 1.7, 0.0, 1.0), 0.85);
   textureStore(dst, id.xy, vec4f(unit * lg + fill * pow(1.0 - lg, 3.0), 1.0));
 }`;
@@ -108,7 +111,8 @@ export default class Galvanizado {
   }
   run(enc, palette, time) {
     const b = palette === 5;
-    this.ctx.device.queue.writeBuffer(this.ub,0,new Float32Array([this.ctx.W,this.ctx.H,palette,time % 9.6,0,b?14:20,b?1.3:1,b?0.05:0.03]));
+    // ciclico-A (4): N=2.0 con curva filmica (Hermann 10 oct 13:10, hoja rica/FILMICA-N.jpg); B: N=1.3; dos tonos: N=1.
+    this.ctx.device.queue.writeBuffer(this.ub,0,new Float32Array([this.ctx.W,this.ctx.H,palette,time % 9.6,0,b?14:20,b?1.3:(palette===4?2:1),b?0.05:0.03]));
     const p = this.ctx.cpass(enc);
     // Las paletas históricas pasan intactas, sin calcular suavizado.
     for(let i=palette>=4?0:2;i<3;i++) {
