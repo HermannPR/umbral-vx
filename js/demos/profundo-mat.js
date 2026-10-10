@@ -259,6 +259,8 @@ export function periodoCaja(cx, cy, P, lr, maxP = 200000) {
       // esquinas z = Z + δ, llevadas a un exponente común
       const zs = d.map((q) => fe.add(Z, q));
       const E = Math.max(...zs.map((z) => z.e));
+      // una esquina escapó hace rato: su exponente se duplica en cada paso y ldexp(x, z.e − E) se colgaba
+      if (E > 1000) return 0;
       const pts = zs.map((z) => [ldexp(z.x, z.e - E), ldexp(z.y, z.e - E)]);
       let dentro = false;
       for (let i = 0, j = 3; i < 4; j = i++) {
