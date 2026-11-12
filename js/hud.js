@@ -27,6 +27,16 @@ export function leyenda(D, pad, modo) {
   add(glifo('l2', pad) + glifo('r2', pad), c.trig, 'sala');
   if (D.palettes) add(glifo('x', pad), 'paleta', 'sala');
   if (c.y !== null) add(glifo('y', pad), c.y || 'modo caos', 'sala');
-  if (!pad) add(glifo('ayuda', false), 'mostrar u ocultar esta ayuda', 'sala');
+  if (!pad) {
+    filas.push('<div class="sep"></div><div class="sep"></div>');
+    const g = (t) => `<span class="g">${t}</span>`;
+    add(g('?'), 'abrir o cerrar este panel', 'gen');
+    add(g('H'), 'ocultar todo el texto', 'gen');
+    add(g('T'), 'instrumentos (fps, GPU)', 'gen');
+    add(g('N'), 'sonido sí / no', 'gen');
+    add(g('V') + g('O'), 'pantalla completa · guardar PNG', 'gen');
+    add(g('P'), 'recorrido automático', 'gen');
+    add(g('1') + g('…') + g('0'), 'ir directo a una sala', 'gen');
+  }
   return filas.join('');
 }

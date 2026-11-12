@@ -1,0 +1,39 @@
+# Third-party notices
+
+UMBRAL VX's own code is MIT-licensed (see `LICENSE`). It ships these third-party files, each under its own license:
+
+| Component | Files | License |
+|---|---|---|
+| [lil-gui](https://lil-gui.georgealways.com) 0.21.0 by George Michael Brower | `js/vendor/lil-gui.esm.min.js` | MIT (below) |
+| [STIX Two Text](https://github.com/stipub/stixfonts) 2.13 | `fuentes/STIXTwoText*.ttf` | SIL Open Font License 1.1 (`fuentes/OFL.txt`) |
+| [Geist Mono](https://github.com/vercel/geist-font) 1.401 | `fuentes/GeistMono.ttf` | SIL Open Font License 1.1 (`fuentes/OFL.txt`) |
+
+The fonts are **not** covered by the MIT license of this repository.
+
+---
+
+## lil-gui
+
+```
+MIT License
+
+Copyright (c) 2019 George Michael Brower
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

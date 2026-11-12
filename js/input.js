@@ -6,6 +6,8 @@ const KEYMAP = {
 };
 const dz = (v, d = 0.14) => (Math.abs(v) < d ? 0 : Math.sign(v) * (Math.abs(v) - d) / (1 - d));
 
+export const enPanel = (e) => !!(e && e.target && e.target.closest && e.target.closest('#panel, #asa'));
+
 export class Input {
   constructor({ onConnect, onDisconnect }) {
     this.held = {}; this.pressed = {}; this.prev = {};
@@ -13,7 +15,8 @@ export class Input {
     this.keys = new Set(); this.taps = new Set(); this.pad = null; this.padIndex = -1; this.lastPadUse = -1e9;
     addEventListener('gamepadconnected', (e) => { this.padIndex = e.gamepad.index; onConnect && onConnect(e.gamepad); });
     addEventListener('gamepaddisconnected', (e) => { if (e.gamepad.index === this.padIndex) { this.padIndex = -1; this.pad = null; } onDisconnect && onDisconnect(e.gamepad); });
-    addEventListener('keydown', (e) => { if (!e.metaKey) { const kk = e.key.length === 1 ? e.key.toLowerCase() : e.key; this.keys.add(kk); if (!e.repeat) this.taps.add(kk); if (e.key === 'Tab' || e.key === ' ') e.preventDefault(); } });
+    // lo que se escribe o se aprieta dentro del panel (deslizadores, listas, botones) no mueve la sala
+    addEventListener('keydown', (e) => { if (enPanel(e)) return; if (!e.metaKey && !e.ctrlKey) { const kk = e.key.length === 1 ? e.key.toLowerCase() : e.key; this.keys.add(kk); if (!e.repeat) this.taps.add(kk); if (e.key === 'Tab' || e.key === ' ') e.preventDefault(); } });
     addEventListener('keyup', (e) => this.keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key));
     addEventListener('blur', () => this.keys.clear());
   }

@@ -12,6 +12,8 @@ export class Antesala {
   constructor({ onSala, onOpcion, sonido, disponible = () => true, evaluacion = () => null }) {
     Object.assign(this, { onSala, onOpcion, sonido, disponible, evaluacion });
     $('a-marca').textContent = MARCA.nombre; $('a-bajada').textContent = MARCA.bajada;
+    const cr = $('a-credito');
+    if (cr) cr.innerHTML = (MARCA.autor ? `<span>${MARCA.autor}</span>` : '') + (MARCA.repo ? `<a href="${MARCA.repo}" target="_blank" rel="noopener">código abierto ↗</a>` : '');
     // el número sale del catálogo (12 en la versión pública, 14 aquí)
     const intro = document.querySelector('#antesala .a-intro');
     if (intro) intro.textContent = intro.textContent.replace(/^\S+ fenómenos/, `${CUANTOS[SALAS.length] || SALAS.length} fenómenos`);

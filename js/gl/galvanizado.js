@@ -40,13 +40,14 @@ vec3 tone(int i,int base){float w=.5-.5*cos(6.28318530718*float(i%1024)/1024.0);
 void main(){
  vec2 uv=gl_FragCoord.xy/res;vec3 raw=texture(src,uv).rgb;
  vec2 lsTilt=texture(suav,uv).rg;float ls=lsTilt.x;
- float ph=6.28318530718*time/9.6,N=pal==5.0?1.3:1.0,tilt=pal==5.0?.05:.03;
+ float ph=6.28318530718*time/9.6,N=pal==5.0?.6:pal==4.0?.8:1.0,tilt=pal==5.0?.05:.03;
  float pos=fract(N*ls+.18*sin(ph)-tilt*lsTilt.y+.06*sin(4.0*uv.x+ph))*1024.0;
  int i=int(floor(pos));float f=fract(pos);
  int j=(i+((f>.5||(f==.5&&i%2==1))?1:0))%1024;
  vec3 unit=row(j),fill=vec3(.008,.008,.035);
  if(pal>5.5){int base=1024+3*(int(pal)-6);unit=mix(tone(i,base),tone(i+1,base),f);unit=1.0+(unit-1.0)*(1.0-.12*pow(sin(3.14159265359*ls),2.0));fill=row(base+2);}
- float lg=pow(clamp(dot(raw,W3)*1.7,0.0,1.0),.85);
+ unit=mix(vec3(dot(unit,W3)),unit,pal<5.5?.6:.85);
+ float lg=pow(clamp(dot(raw,W3)*1.2,0.0,1.0),1.15);
  o=vec4(unit*lg+fill*pow(1.0-lg,3.0),1);
 }`;
 export default class GalvanizadoGL {

@@ -2,12 +2,14 @@
 import { initWebGPU } from './gpu.js';
 import { Post } from './post.js';
 import { fmt } from './util.js';
-import { Input } from './input.js';
+import { Input, enPanel } from './input.js';
 import { leyenda } from './hud.js';
 import { SALAS, ACTOS, MARCA, num, dibujarFirma, firmaSVG } from './salas.js';
 import { detectarBasico, perfilGuardado, medir, nivel, evaluar, claseGPU, CALIDADES, fmtG } from './equipo.js';
 import { Sonido } from './sonido.js';
 import { Antesala } from './antesala.js';
+import { Pista } from './pista.js';
+import { Panel } from './panel.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c');
@@ -35,13 +37,19 @@ addEventListener('unhandledrejection', (e) => report('Promise: ' + (e.reason && 
 const perf = { fps: 60, frameMs: 16.7, gpuMs: null, hz: 60 };
 const pointer = { x: 0, y: 0, down: false, dx: 0, dy: 0, moved: 0 };
 const sonido = new Sonido();
+// «tu música»: una canción propia (o el micrófono) que Señal escucha en lugar de la música generativa
+const pista = sonido.pista = new Pista(sonido);
+try { const v = parseFloat(localStorage.getItem('lab.vol')); if (v >= 0 && v <= 1) sonido.vol = v; } catch {}
 const input = new Input({
   onConnect: (g) => { aviso('Mando conectado'); refrescarLeyenda(); despertar(); log({ type: 'pad', id: g.id }); },
   onDisconnect: () => { aviso('Mando desconectado'); refrescarLeyenda(); },
 });
 let ctx = null, current = null, idx = -1, modo = 'arranque', ocupado = false, pausado = false;
-let pausaSala = false, ayudaFija = false, ayudaT = 0, framesSala = 0;
-let recorrido = params.has('recorrido'), instrumentos = false, salaT = 0, time0 = performance.now(), ultimoUso = performance.now();
+let pausaSala = false, framesSala = 0, panel = null, capturaPendiente = false;
+const iSenal = SALAS.findIndex((S) => S.slug === 'senal');
+let fichaOn = true;
+try { fichaOn = localStorage.getItem('umbral.ficha') !== '0'; } catch {}
+let recorrido = params.has('recorrido'), salaT = 0, time0 = performance.now(), ultimoUso = performance.now();
 let clases = {}, glDemos = null, antesala = null;
 let perfil = null, evals = [], calidadManual = null, gpuRef = null;
 let reconstruir = false;         // la ventana cambió de tamaño con la antesala abierta: la sala se rehace al volver
@@ -134,6 +142,10 @@ async function boot() {
       antesala.actualizar(estado());
     },
   });
+  panel = new Panel(accPanel());
+  aplicarFicha();
+  $('f-x').addEventListener('click', () => fijarFicha(false));
+  $('f-mini').addEventListener('click', () => fijarFicha(true));
   sonido.iniciar();
   abrirAntesala();
   await perfilar();
@@ -158,7 +170,7 @@ async function claseDe(i) {
 }
 // la sala disponible más cercana en esa dirección (el recorrido salta las que este equipo no puede correr)
 function vecina(i, dir) { for (let k = 1; k <= SALAS.length; k++) { const j = (i + dir * k + SALAS.length * 2) % SALAS.length; if (disponible(j)) return j; } return i; }
-const estado = () => ({ recorrido, sonido: !sonido.mudo, instrumentos, pad: input.connected, calidad: calidadManual === null ? 'automática' : CALIDADES[calidadManual].nombre });
+const estado = () => ({ recorrido, sonido: !sonido.mudo, instrumentos: !!(panel && panel.instrumentosVisibles), pad: input.connected, calidad: calidadManual === null ? 'automática' : CALIDADES[calidadManual].nombre });
 
 // ---------- timestamps GPU ----------
 // ---------- gobernador de calidad ----------
@@ -287,7 +299,9 @@ async function entrar(i, primera = false, op = {}) {
     pausaSala = false; mostrarPausa();
     if (sonido.pausado && !pausado) sonido.reanudar();
     sonido.partitura(S.slug);
+    pista.enSala(S.slug === 'senal');
   }
+  document.body.classList.remove('en-antesala');
   llenarFicha(i);                 // antes de init: las salas que se acomodan alrededor de la ficha la miden ya con su texto
   try {
     const D = await claseDe(i);
@@ -303,6 +317,7 @@ async function entrar(i, primera = false, op = {}) {
     $('capa').innerHTML = `<div class="fallo"><div class="rotulo-t">Nº ${num(i)} · no arrancó</div><p>${S.nombre} no pudo arrancar en este equipo.</p>
       <div class="rotulo">${input.connected ? 'LB RB' : '← →'} otra sala · ${input.connected ? 'B' : 'esc'} antesala</div></div>`;
   }
+  if (panel) panel.sala({ num: num(i), acto: ACTOS[S.acto].nombre, nombre: S.nombre, D: current && current.constructor, slug: S.slug });
   refrescarLeyenda();
   salaT = 0; perf.fps = 60; perf.gpuMs = null; gpuAcc = []; frameAcc = [];
   framesSala = 0;
@@ -311,7 +326,7 @@ async function entrar(i, primera = false, op = {}) {
   if (!sil) {
     await espera(Math.max(0, (primera ? 1500 : 1700) - (performance.now() - t0)));
     ocultarPortada();
-    mostrarAyuda(3200);
+    if (panel && !panel.abierto) panel.llamar();
   }
   ocupado = false;
 }
@@ -359,26 +374,11 @@ function nombreModo() {
 }
 let modoMostrado = '';
 function refrescarLeyenda() {
-  if (!current || idx < 0) return;
+  if (!current || idx < 0 || !panel) return;
   modoMostrado = nombreModo();
-  $('mando').innerHTML = leyenda(current.constructor, input.connected, modoMostrado);
+  panel.leyenda(leyenda(current.constructor, input.connected, modoMostrado));
+  panel.modo(modoMostrado);
   lastHeld = null;                // los glifos nuevos vuelven a marcar lo que esté apretado
-  medirMando();
-}
-// instrumentos y ayuda comparten el lado derecho: si están los dos, los instrumentos se recortan arriba de la ayuda
-function medirMando() {
-  const m = $('mando');
-  document.documentElement.style.setProperty('--alto-mando', (m.classList.contains('visible') ? m.offsetHeight : 0) + 'px');
-}
-// ayuda: 3 s al entrar a una sala; «?» la fija o la quita
-function mostrarAyuda(ms) {
-  $('mando').classList.add('visible'); clearTimeout(ayudaT);
-  refrescarLeyenda();
-  if (ms) ayudaT = setTimeout(() => { if (!ayudaFija) { $('mando').classList.remove('visible'); medirMando(); } }, ms);
-}
-function alternarAyuda() {
-  ayudaFija = !$('mando').classList.contains('visible') || !ayudaFija;
-  if (ayudaFija) mostrarAyuda(0); else { clearTimeout(ayudaT); $('mando').classList.remove('visible'); medirMando(); }
 }
 // ↑ ↓: modo de la sala (o preset de color si la sala no tiene modos)
 function cambiarModo(dir) {
@@ -406,6 +406,8 @@ function mostrarPausa() {
 function abrirAntesala() {
   if (!antesala) return;
   modo = 'antesala';
+  document.body.classList.add('en-antesala');
+  pista.enSala(false);
   antesala.mostrar(current ? idx : -1, estado());
   mostrarPausa();
   if (pausaSala && sonido.pausado && !pausado) sonido.reanudar();      // la antesala suena aunque la sala quedó en pausa
@@ -418,9 +420,11 @@ function cerrarAntesala() {
   if (nivelPara(idx) !== ctx.calidad.nivel) return entrar(idx, true);
   if (reconstruir) { const vista = vistaPendiente; vistaPendiente = null; return vista ? entrar(idx, true, { silencioso: true, vista }) : rehacerSala(); }
   antesala.ocultar(); modo = 'sala';
+  document.body.classList.remove('en-antesala');
   document.documentElement.style.setProperty('--acento', SALAS[idx].acento);
   llenarFicha(idx);               // p. ej. «(manual)» si se fijó la calidad en la antesala
   sonido.partitura(SALAS[idx].slug);
+  pista.enSala(SALAS[idx].slug === 'senal');
   if (pausaSala) sonido.pausar();
   mostrarPausa();
   last = performance.now(); despertar();
@@ -431,9 +435,105 @@ function aviso(msg) {
   $('aviso').textContent = msg; $('aviso').classList.add('visible'); clearTimeout(avisoT);
   avisoT = setTimeout(() => $('aviso').classList.remove('visible'), 1900);
 }
-function alternarInstrumentos() { instrumentos = !instrumentos; $('instrumentos').classList.toggle('visible', instrumentos); }
-// el HUD descansa tras unos segundos sin tocar nada y vuelve con cualquier entrada
+// T: los instrumentos viven en el panel (se abre en esa sección, o se cierra si ya estaban a la vista)
+function alternarInstrumentos() {
+  if (!panel) return;
+  if (panel.instrumentosVisibles) panel.guis.instrumentos.close(); else panel.abrir('instrumentos');
+  dibujarDatos();
+}
+// la ficha ya no se va sola: se cierra con su × (o desde el panel) y queda el rótulo chico para traerla de vuelta.
+// Solo en el recorrido automático descansa sola, para que el video quede limpio.
 function despertar() { ultimoUso = performance.now(); $('hud').classList.remove('reposo'); $('ficha').classList.remove('reposo'); }
+function aplicarFicha() { document.body.classList.toggle('sin-ficha', !fichaOn); if (panel) panel.vista({ ficha: fichaOn }); }
+function fijarFicha(v) { fichaOn = !!v; try { localStorage.setItem('umbral.ficha', fichaOn ? '1' : '0'); } catch {} aplicarFicha(); }
+function alternarTexto() { const o = $('hud').classList.toggle('oculto'); document.body.classList.toggle('sin-texto', o); }
+
+// ---------- vista: pantalla completa, imagen, enlace ----------
+function pantallaCompleta() {
+  const d = document, el = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else { const f = el.requestFullscreen || el.webkitRequestFullscreen; if (f) Promise.resolve(f.call(el)).catch(() => aviso('Pantalla completa no disponible')); else aviso('Pantalla completa no disponible'); }
+}
+// la imagen se toma justo después de dibujar el cuadro (antes de que el navegador lo presente): sin texto, a la resolución del lienzo
+function captura() { if (modo !== 'sala' || !current) { aviso('Entra a una sala para guardar la imagen'); return; } capturaPendiente = true; }
+function guardarPNG() {
+  const nombre = `umbral-${num(idx)}-${SALAS[idx].slug}.png`;
+  canvas.toBlob((b) => {
+    if (!b) { aviso('No pude guardar la imagen'); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = nombre;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    aviso('Imagen guardada · ' + nombre);
+  }, 'image/png');
+}
+function copiarEnlace() {
+  const url = location.origin + location.pathname + (idx >= 0 && modo === 'sala' ? '?sala=' + (idx + 1) : '');
+  const ok = () => aviso('Enlace copiado'), no = () => aviso(url);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, no); else no();
+}
+
+// ---------- tu música: soltar una canción en cualquier lado la lleva a Señal ----------
+async function cargarCancion(f) {
+  if (iSenal < 0) return;
+  if (!disponible(iSenal)) { aviso('Señal no está disponible en este equipo'); return; }
+  try {
+    for (let k = 0; ocupado && k < 60; k++) await espera(100);
+    if (!(modo === 'sala' && idx === iSenal)) await entrar(iSenal);
+    for (let k = 0; ocupado && k < 60; k++) await espera(100);
+    if (!(modo === 'sala' && idx === iSenal)) return;
+    await pista.cargarArchivo(f);
+    pista.enSala(true);
+    aviso('Tu música · ' + pista.nombre);
+    panel && panel.abrir('musica');
+  } catch (e) { aviso(e && e.name === 'EncodingError' ? 'No pude leer ese audio' : (e && e.message) || 'No pude abrir ese audio'); }
+}
+let arrastres = 0;
+const conArchivos = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+addEventListener('dragenter', (e) => { if (!ctx || !conArchivos(e)) return; e.preventDefault(); arrastres++; $('soltar').classList.add('visible'); });
+addEventListener('dragover', (e) => { if (!conArchivos(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+addEventListener('dragleave', (e) => { if (!conArchivos(e)) return; arrastres = Math.max(0, arrastres - 1); if (!arrastres) $('soltar').classList.remove('visible'); });
+addEventListener('drop', (e) => {
+  if (!conArchivos(e)) return;
+  e.preventDefault(); arrastres = 0; $('soltar').classList.remove('visible');
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) cargarCancion(f);
+});
+
+// lo que el panel puede pedir
+function accPanel() {
+  return {
+    alCambiar: () => { dibujarDatos(); antesala && antesala.actualizar(estado()); },
+    pulsar: (b) => { input.inject = b; },
+    pantallaCompleta, captura, copiarEnlace,
+    ocultarTodo: alternarTexto,
+    antesala: () => abrirAntesala(),
+    sonido: (x) => { if (x === sonido.mudo) sonido.alternarMudo(); antesala && antesala.actualizar(estado()); },
+    volumen: (x) => { sonido.vol = x; sonido.aplicarVolumen(0.1); try { localStorage.setItem('lab.vol', String(x)); } catch {} },
+    ficha: (x) => fijarFicha(x),
+    recorrido: (x) => { if (x !== recorrido) alternarRecorrido(); },
+    calidad: (x) => {
+      const q = CALIDADES.findIndex((c) => c.nombre === x);
+      calidadManual = q < 0 ? null : q;
+      if (modo === 'sala' && current && nivelPara(idx) !== ctx.calidad.nivel) rehacerSala().then(() => llenarFicha(idx));
+      else if (current) llenarFicha(idx);
+      antesala && antesala.actualizar(estado());
+    },
+    calidades: ['automática', ...CALIDADES.map((c) => c.nombre)],
+    pista,
+    senal: () => (current && idx === iSenal && modo === 'sala' ? current : null),
+    cargarCancion,
+    aviso,
+  };
+}
+function sincronizarPanel() {
+  if (!panel) return;
+  panel.vista({ sonido: !sonido.mudo, volumen: sonido.vol, ficha: fichaOn, recorrido, calidad: calidadManual === null ? 'automática' : CALIDADES[calidadManual].nombre });
+}
+function alternarRecorrido() {
+  recorrido = !recorrido; aviso(recorrido ? `Recorrido · ${REC_S} s por sala` : 'Recorrido detenido');
+  if (recorrido && modo === 'antesala') { if (current) cerrarAntesala(); else entrar(vecina(-1, 1)); }
+  if (!recorrido) despertar();
+  antesala && antesala.actualizar(estado()); sincronizarPanel();
+}
 
 // ---------- entrada ----------
 // Esquema único para todas las salas (ver hud.js)
@@ -464,29 +564,39 @@ function manejarBotones() {
 }
 
 addEventListener('keydown', (e) => {
-  if (e.metaKey || !ctx) return;
+  if (e.metaKey || e.ctrlKey || !ctx) return;
   sonido.iniciar();
   const k = e.key.toLowerCase();
   despertar();
   if (!antesala) return;
+  // dentro del panel solo cuentan «?» (cerrarlo) y esc (devolverle el foco a la sala)
+  if (enPanel(e)) {
+    if (e.key === '?') { e.preventDefault(); panel.cerrar(); }
+    else if (e.key === 'Escape') { e.target.blur && e.target.blur(); }
+    return;
+  }
   if (/^[0-9]$/.test(k) && modo !== 'arranque') { const i = k === '0' ? 9 : +k - 1; if (i < SALAS.length) entrar(i); }
-  else if (k === 'p') { recorrido = !recorrido; aviso(recorrido ? `Recorrido · ${REC_S} s por sala` : 'Recorrido detenido'); if (recorrido && modo === 'antesala') { if (current) cerrarAntesala(); else entrar(vecina(-1, 1)); } antesala && antesala.actualizar(estado()); }
-  else if (k === 'h') $('hud').classList.toggle('oculto');
-  else if (e.key === '?' || (e.key === '/' && e.shiftKey)) alternarAyuda();
+  else if (k === 'p') alternarRecorrido();
+  else if (k === 'h') alternarTexto();
+  else if (e.key === '?' || (e.key === '/' && e.shiftKey)) { if (modo === 'sala') panel.alternar(); }
+  else if (k === 'v') pantallaCompleta();
+  else if (k === 'o' && modo === 'sala') captura();
   // T (telemetría): instrumentos. Antes era I, pero I es parte de IJKL (stick derecho) y los abría al mirar hacia arriba
   else if (k === 't') { alternarInstrumentos(); antesala && antesala.actualizar(estado()); }
-  else if (k === 'n') { aviso(sonido.alternarMudo() ? 'Sonido' : 'Silencio'); antesala && antesala.actualizar(estado()); }
+  else if (k === 'n') { aviso(sonido.alternarMudo() ? 'Sonido' : 'Silencio'); antesala && antesala.actualizar(estado()); sincronizarPanel(); }
   else if (current && current.onKey && modo === 'sala') current.onKey(k);
 });
 // el puntero va en píxeles del lienzo (no del CSS × dpr): con calidad < máxima el lienzo es más chico que la pantalla
 const dpr = () => (canvas.width > 64 ? canvas.width / Math.max(1, innerWidth) : window.devicePixelRatio || 1);
-addEventListener('pointerdown', (e) => { sonido.iniciar(); pointer.down = true; pointer.x = e.clientX * dpr(); pointer.y = e.clientY * dpr(); despertar(); });
+addEventListener('pointerdown', (e) => { sonido.iniciar(); despertar(); if (enPanel(e) || (e.target.closest && e.target.closest('#ficha, #f-mini, #soltar'))) return; pointer.down = true; pointer.x = e.clientX * dpr(); pointer.y = e.clientY * dpr(); despertar(); });
 addEventListener('pointerup', () => { pointer.down = false; });
 addEventListener('pointermove', (e) => {
+  document.body.classList.add('cursor');
+  clearTimeout(pointer.hide); pointer.hide = setTimeout(() => document.body.classList.remove('cursor'), 2500);
+  if (enPanel(e)) return;
   const x = e.clientX * dpr(), y = e.clientY * dpr();
   pointer.dx += x - pointer.x; pointer.dy += y - pointer.y; pointer.x = x; pointer.y = y; pointer.moved = performance.now();
-  document.body.classList.add('cursor'); despertar();
-  clearTimeout(pointer.hide); pointer.hide = setTimeout(() => document.body.classList.remove('cursor'), 2500);
+  despertar();
 });
 // una ráfaga de resize (kiosco, pantalla completa) reconstruye la sala una sola vez, y nunca a media entrada
 let resizeT = 0;
@@ -526,7 +636,7 @@ function frame(now) {
   if (pausado) return;
   if (now - last < 1000 / FPS_MAX - 1.5) return;         // tope de fps (en 120 Hz se dibuja un frame sí y otro no)
   const rawDt = (now - last) / 1000; last = now;
-  const dt = Math.min(rawDt, 0.05);
+  const dt = pausaSala ? 0 : Math.min(rawDt, 0.05);
   frameAcc.push(rawDt * 1000); if (frameAcc.length > 30) frameAcc.shift();
   perf.frameMs = frameAcc.reduce((a, b) => a + b, 0) / frameAcc.length;
   perf.fps = 1000 / perf.frameMs;
@@ -535,7 +645,7 @@ function frame(now) {
   if (antesala) manejarBotones();
   if (modo !== 'sala') { input.lx = input.ly = input.rx = input.ry = input.l2 = input.r2 = 0; input.pressed = {}; input.held = {}; }
   actualizarGlifos();
-  if (!current || modo === 'antesala' || pausaSala) return;
+  if (!current || modo === 'antesala' || (pausaSala && !capturaPendiente)) return;
   framesSala++;
   const t = (now - time0) / 1000;
   salaT += dt;
@@ -552,6 +662,7 @@ function frame(now) {
         if (!ts.pending) { enc.copyBufferToBuffer(ts.resolve, 0, ts.read, 0, nq * 8); copied = true; }
       }
       ctx.device.queue.submit([enc.finish()]);
+      if (capturaPendiente) { capturaPendiente = false; guardarPNG(); }
       if (copied) {
         ts.pending = true;
         ts.read.mapAsync(GPUMapMode.READ, 0, nq * 8).then(() => {
@@ -563,9 +674,11 @@ function frame(now) {
           if (ms > 0 && ms < 1000) { gpuAcc.push(ms); if (gpuAcc.length > 15) gpuAcc.shift(); perf.gpuMs = median(gpuAcc); }
         }).catch(() => { ts.pending = false; });
       }
-    } else current.frame(dt, t);
+    } else { current.frame(dt, t); if (capturaPendiente) { capturaPendiente = false; guardarPNG(); } }
   } catch (e) { report('frame: ' + (e.stack || e.message)); }
   if (current.after) current.after();
+  if (pausaSala) return;
+  if (panel) panel.tick();
 
   // sonido: señales de la sala + movimiento general de la entrada
   const mov = Math.min(1, Math.hypot(input.lx, input.ly) * 0.6 + Math.hypot(input.rx, input.ry) * 0.6 + (now - pointer.moved < 200 ? 0.5 : 0) + (pointer.down ? 0.4 : 0));
@@ -579,14 +692,13 @@ function frame(now) {
     $('rec-sig').textContent = 'a continuación · ' + num(sig) + ' ' + SALAS[sig].nombre;
     $('rec-sig').classList.toggle('visible', salaT > REC_S - 7);
   }
-  if (!recorrido && now - ultimoUso > 9000) { $('hud').classList.add('reposo'); $('ficha').classList.add('reposo'); }
   if (recorrido && salaT > 12 && salaT < REC_S - 7) { $('hud').classList.add('reposo'); $('ficha').classList.add('reposo'); }
   else if (recorrido && salaT <= 12) despertar();
 
   gobernarCalidad(rawDt);
   if (!current) return;           // el gobernador pudo rehacer la sala: entrar() ya la vació y la nueva aún no está lista
   hudT += rawDt; logT += rawDt;
-  if (hudT > 0.25) { hudT = 0; dibujarDatos(); }
+  if (hudT > 0.25) { hudT = 0; dibujarDatos(); sincronizarPanel(); }
   if (logT > 3) {
     logT = 0;
     log({ type: 'stats', sala: idx + 1, fps: +perf.fps.toFixed(1), gpuMs: perf.gpuMs && +perf.gpuMs.toFixed(2), stats: (current.stats ? current.stats() : []).filter((r) => r !== '-').map((r) => r.slice(0, 2)) });
@@ -599,7 +711,7 @@ function actualizarGlifos() {
     (Math.hypot(input.lx, input.ly) > 0.2 ? ',ls' : '') + (Math.hypot(input.rx, input.ry) > 0.2 ? ',rs' : '');
   if (h === lastHeld) return; lastHeld = h;
   const on = new Set(h.split(','));
-  document.querySelectorAll('#mando .g').forEach((el) => el.classList.toggle('on', el.dataset.b.split(' ').some((b) => on.has(b))));
+  document.querySelectorAll('#panel .g[data-b]').forEach((el) => el.classList.toggle('on', el.dataset.b.split(' ').some((b) => on.has(b))));
 }
 
 function dibujarDatos() {
@@ -609,10 +721,10 @@ function dibujarDatos() {
   const big = rows.find((r) => r !== '-' && r[2]);
   const lectura = current.lectura ? current.lectura() : big ? `${big[1]} ${big[0]}` : '';
   $('f-dato').textContent = [lectura, perf.fps.toFixed(0) + ' fps'].filter(Boolean).join('   ·   ');
-  if (!instrumentos) return;
+  if (!panel || !panel.instrumentosVisibles) return;
   const D = current.constructor, g = [];
   const row = (k, v, c = '') => `<div class="r ${c}"><span>${k}</span><b>${v}</b></div>`;
-  g.push(`<div class="tit">Instrumentos · ${ctx.api === 'webgpu' ? 'WebGPU' : 'WebGL2'}${ctx.gpuInfo ? ' · ' + ctx.gpuInfo : ''}</div>`);
+  g.push(`<div class="tit">${ctx.api === 'webgpu' ? 'WebGPU' : 'WebGL2'}${ctx.gpuInfo ? ' · ' + ctx.gpuInfo : ''}</div>`);
   g.push(row('fps', perf.fps.toFixed(0), 'dest'));
   g.push(row('ms / frame', perf.frameMs.toFixed(2)));
   if (perf.gpuMs != null) g.push(row('GPU ms / frame', perf.gpuMs.toFixed(2)));
@@ -625,21 +737,21 @@ function dibujarDatos() {
   if (D.palettes) g.push(row('paleta', D.palettes[current.palette]));
   if (current.chaos) g.push(row('modo', 'caos'));
   g.push(row('recorrido', recorrido ? `${Math.max(0, REC_S - salaT).toFixed(0)} s` : 'detenido'));
-  const I = $('instrumentos');
-  I.innerHTML = g.join('');
-  I.classList.toggle('recortado', I.scrollHeight > I.clientHeight + 1);
+  panel.instrumentos(g.join(''));
 }
 
 // ---------- ganchos de prueba (herramientas/capturar.mjs) ----------
 window.__lab = {
   ready: false, count: SALAS.length, sinGPU: null, slugs: SALAS.map((S) => S.slug),
   async go(i) { if (i === 0) { abrirAntesala(); return; } if (modo === 'antesala' && i - 1 === idx && current) { await cerrarAntesala(); return; } await entrar(i - 1); },
-  info() { return { modoVista: modo, ocupado, pausada: pausaSala, frames: framesSala, modo: nombreModo(), sel: antesala && antesala.sel, ayuda: $('mando').classList.contains('visible'), slug: modo === 'antesala' ? 'antesala' : SALAS[idx].slug, perf: { fps: +perf.fps.toFixed(1), gpuMs: perf.gpuMs && +perf.gpuMs.toFixed(2) }, calidad: ctx && ctx.calidad && ctx.calidad.nombre, W: ctx && ctx.W, errores,
+  info() { return { modoVista: modo, ocupado, pausada: pausaSala, frames: framesSala, modo: nombreModo(), sel: antesala && antesala.sel, ayuda: !!(panel && panel.abierto), musica: pista.fuente, slug: modo === 'antesala' ? 'antesala' : SALAS[idx].slug, perf: { fps: +perf.fps.toFixed(1), gpuMs: perf.gpuMs && +perf.gpuMs.toFixed(2) }, calidad: ctx && ctx.calidad && ctx.calidad.nombre, W: ctx && ctx.W, errores,
     audio: { pausado: !!sonido.pausado, estado: sonido.ac ? sonido.ac.state : 'sin contexto', partitura: sonido.actual ? sonido.actual.nombre : '' } }; },
   perfil() { return { perfil, evals, api: ctx && ctx.api, rendererGL: ctx && ctx.rendererGL, escalaGL: ctx && ctx.escalaGL, ajuste }; },
   hud(v) { $('hud').classList.toggle('oculto', !v); $('capa').style.visibility = v ? '' : 'hidden'; },
   despertar,
   pulsar(b) { input.inject = b; },
+  panel: () => panel,
+  pista,
   simularPerdidaGPU() { simulandoPerdida = true; ctx.device.destroy(); },
   gobernar() { gobLento = 99; },
 };

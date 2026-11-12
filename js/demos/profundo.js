@@ -299,7 +299,7 @@ export default class Profundo {
     this.ptr = { abajo: false, x0: 0, y0: 0, lx: 0, ly: 0, arrastre: 0 };
     this.rueda = 0; this.ruedaUV = [0, 0];
     this.onWheel = (e) => {
-      if (!this.activo) return;
+      if (!this.activo || (e.target && e.target.closest && e.target.closest('#panel'))) return;
       const dpr = c.W / Math.max(1, innerWidth);
       this.rueda += -Math.max(-120, Math.min(120, e.deltaY)) * 0.01;
       this.ruedaUV = this.uvDe(e.clientX * dpr, e.clientY * dpr);

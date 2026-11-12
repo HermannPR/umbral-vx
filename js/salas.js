@@ -1,5 +1,5 @@
 // Nombre de la galería: se cambia aquí y en <title> de index.html (todo lo demás lo lee de MARCA).
-export const MARCA = { nombre: 'UMBRAL VX', bajada: 'Visual eXperiments · tiempo real en tu navegador', video: '' };
+export const MARCA = { nombre: 'UMBRAL VX', bajada: 'Visual eXperiments · tiempo real en tu navegador', video: 'media/umbral-vx-promo.mp4', autor: 'casiangel333 · HermannPR', repo: 'https://github.com/HermannPR/umbral-vx' };
 
 // Catálogo del laboratorio: orden, nombres, textos, procedencia, color y firma de cada sala.
 // El orden está pensado como recorrido: cuatro actos que alternan calma y energía, oscuridad y luz.

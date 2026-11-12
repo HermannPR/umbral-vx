@@ -1,137 +1,137 @@
 # UMBRAL · VX
 
-*Visual eXperiments · tiempo real en tu navegador*
+*Visual eXperiments — twelve real-time GPU simulations in your browser, each with its own generative sound.*
 
-**Galería de cómputo pesado en el navegador.** Doce fenómenos simulados en tiempo real en la GPU con WebGPU: galaxias que chocan, atractores caóticos, fluidos, reacción-difusión, fractales, trazado de caminos y un sintetizador de video. Cada sala tiene su propia música generativa.
+![Tour of the twelve rooms](media/recorrido.gif)
 
-![Recorrido por las doce salas de Umbral](media/recorrido.gif)
+**[▶ Open UMBRAL VX](https://umbral-vx.vercel.app)** · **[Watch the 60 s showcase](media/umbral-vx-promo.mp4)** · [Español abajo](#español)
 
-**[Abrir UMBRAL VX](https://umbral-vx.vercel.app)** (TODO: confirmar la URL de Vercel) · **[Ver el video del recorrido](TODO-enlace-al-video)** · [English below](#english)
+by **casiangel333** ([HermannPR](https://github.com/HermannPR)) · MIT
 
-> Necesita un navegador con WebGPU (Chrome o Edge recientes, Safari 26, Firefox reciente). Sin WebGPU, Umbral cambia a una versión WebGL2 de 7 salas. Si no hay ninguna de las dos, muestra el video y las láminas.
+> Needs a browser with WebGPU (recent Chrome or Edge, Safari 26, recent Firefox). Without WebGPU it switches to a 7-room WebGL2 version; with neither, it shows the video and stills.
 
 ---
 
-## Qué es
+## What it is
 
-Umbral es una galería: entras a una antesala, eliges una sala y cada sala es una simulación que le pide algo distinto a la tarjeta gráfica. El nombre viene de esa idea, porque cada sala tiene un umbral de cómputo.
+A gallery for heavy compute. You enter a lobby, pick a room, and each room is a simulation that asks something different of your GPU: colliding galaxies, chaotic attractors, double pendulums, Chladni plates, Gray–Scott reaction–diffusion, Physarum, Navier–Stokes ink, a Lattice Boltzmann wind tunnel compared live against a physics-informed neural network, Mandelbulb/Mandelbox raymarching (with an infinite deep-zoom Mandelbrot), a progressive path tracer and a live-coded video synth.
 
-Antes de entrar, Umbral mide tu equipo en unos 3 segundos y te dice, sala por sala, si corre en calidad máxima, reducida o si no está disponible y por qué. En una computadora potente todo corre en máxima. En una laptop modesta corre lo que cabe, a la calidad que cabe.
+*Umbral* is Spanish for *threshold*: every room has its own compute threshold, and the gallery measures yours before you go in.
 
-Todo es estático: HTML, CSS y JavaScript sin dependencias ni paso de compilación. Los sombreadores WGSL van escritos a mano.
+![The twelve rooms](media/mosaico.jpg)
 
-## Las salas
+## New in this version
 
-![Las doce salas](media/mosaico.jpg)
+- **Bring your own music.** Drop an audio file anywhere on the page (or use the mic) and the *Señal* room listens and follows it: bass → hits, mids → twist, highs → sparks, plus tempo detection and drops. Tune sensitivity, smoothing and each band from the panel. Your song never leaves your machine — it is decoded and analysed in the browser.
+- **A side panel that stays.** Controls, room actions, your music and view settings live in a collapsible panel (built on [lil-gui](https://lil-gui.georgealways.com)). Nothing fades away before you can read it: open it with `?`, close it with `×`, it remembers its state.
+- **Capture and share.** `O` saves a full-resolution PNG of the current frame, `V` goes fullscreen, and the panel copies a direct link to the room.
+- **Calmer palettes.** The *Bulbo* colour grades were rebalanced so the cyclic and two-tone palettes keep the shape readable instead of burning out.
+- **New generative music** for the lobby and reworked melodies in *Señal*.
 
-| Nº | Sala | Carga | Qué es |
+| Your music in *Señal* | The panel in *Bulbo* |
+|---|---|
+| ![Señal following a dropped song](media/panel-senal.jpg) | ![Bulbo with the side panel open](media/panel-bulbo.jpg) |
+
+## The rooms
+
+| Nº | Room | Load | What it is |
 |---|---|---|---|
-| 01 | Colisión | pesada | Dos galaxias espirales que chocan: millones de estrellas en N-cuerpos con halos oscuros. |
-| 02 | Atractores | pesada | Lorenz, Aizawa, Thomas, Halvorsen y Rössler con millones de puntos. Al cambiar de sistema, el nuevo flujo lleva las partículas a su atractor. |
-| 03 | Péndulos | media | Miles de péndulos dobles casi iguales que divergen, un mapa de volteo y el rotor pateado de Chirikov. |
-| 04 | Chladni | ligera | Arena sobre una placa que vibra. La arena se junta en las líneas nodales y la placa suena en la frecuencia de su modo. |
-| 05 | Morfogénesis | pesada | Reacción-difusión de Gray-Scott: los patrones de Turing. |
-| 06 | Plasmodio | pesada | Physarum: millones de agentes que siguen su propio rastro y tejen una red. |
-| 07 | Tinta | media | Navier–Stokes incompresible con confinamiento de vorticidad. |
-| 08 | Viento urbano | media | Lattice Boltzmann D2Q9 en vivo sobre una ciudad sintética, comparado con una red neuronal informada por física (PINN) evaluada en la GPU. |
-| 09 | Bulbo | extrema | Mandelbulb y Mandelbox por raymarching. |
-| 10 | Luz | extrema | Trazado de caminos progresivo: el ruido converge en una imagen. |
-| 11 | Señal | media | Un sintetizador de video que se ve como código y se edita en vivo, movido por una máquina de ritmos de cinco estilos. |
-| 12 | Ensamble | extrema | Un fractal, un fluido y dos millones de partículas en el mismo cuadro. |
+| 01 | Colisión | heavy | Two spiral galaxies colliding: millions of stars, N-body with dark halos. |
+| 02 | Atractores | heavy | Lorenz, Aizawa, Thomas, Halvorsen and Rössler with millions of points; switching systems lets the new flow carry the particles to its attractor. |
+| 03 | Péndulos | medium | Thousands of near-identical double pendulums diverging, a flip map and Chirikov's kicked rotor. |
+| 04 | Chladni | light | Sand on a vibrating plate gathers on the nodal lines; the plate sings at its mode's frequency. |
+| 05 | Morfogénesis | heavy | Gray–Scott reaction–diffusion: Turing patterns. |
+| 06 | Plasmodio | heavy | Physarum: millions of agents following their own trail weave a network. |
+| 07 | Tinta | medium | Incompressible Navier–Stokes with vorticity confinement. |
+| 08 | Viento urbano | medium | Live Lattice Boltzmann D2Q9 over a synthetic city, compared with a PINN evaluated on the GPU. |
+| 09 | Bulbo | extreme | Mandelbulb and Mandelbox raymarching, plus an infinite-zoom Mandelbrot. |
+| 10 | Luz | extreme | Progressive path tracing: noise converging into an image. |
+| 11 | Señal | medium | A video synth that reads like code and is edited live, driven by a five-style drum machine — or by your own song. |
+| 12 | Ensamble | extreme | A fractal, a fluid and two million particles in the same frame. |
 
-<table>
-<tr>
-<td><img src="capturas/01-colision.jpg" alt="Colisión"></td>
-<td><img src="capturas/02-atractores.jpg" alt="Atractores"></td>
-<td><img src="capturas/08-viento.jpg" alt="Viento urbano"></td>
-</tr>
-<tr>
-<td><img src="capturas/09-bulbo.jpg" alt="Bulbo"></td>
-<td><img src="capturas/10-luz.jpg" alt="Luz"></td>
-<td><img src="capturas/11-senal.jpg" alt="Señal"></td>
-</tr>
-</table>
+## Controls
 
-## Controles
+Same scheme in every room. Keyboard, mouse or gamepad (Xbox/PlayStation, standard mapping).
 
-El esquema es el mismo en todas las salas. Funciona con teclado, ratón o mando (Xbox/PlayStation, mapeo estándar).
-
-| Acción | Teclado | Mando |
+| Action | Keyboard | Gamepad |
 |---|---|---|
-| Sala anterior / siguiente | ← → | LB / RB |
-| Modo de la sala | ↑ ↓ | cruceta ↑ ↓ |
-| Acción de la sala | Enter | A |
-| Pausa | Espacio | Select |
-| Antesala | Esc o M | B o Start |
-| Control propio 1 / 2 | WASD / IJKL | stick izquierdo / derecho |
-| Intensidad | Q / E | LT / RT |
-| Paleta | X | X |
-| Acción secundaria | C | Y |
-| Ir a la sala 1–10 | 1…9, 0 | — |
-| Recorrido automático | P | — |
-| Instrumentos (fps, GPU) / ocultar texto / sonido | I / H / N | — |
-| Ayuda | ? | — |
+| Previous / next room | ← → | LB / RB |
+| Room mode | ↑ ↓ | D-pad ↑ ↓ |
+| Room action | Enter | A |
+| Pause | Space | Select |
+| Lobby | Esc | B / Start |
+| Room controls 1 / 2 | WASD / IJKL | left / right stick |
+| Intensity | Q / E | LT / RT |
+| Palette / secondary action | X / C | X / Y |
+| Jump to room 1–10 | 1…9, 0 | — |
+| **Open / close the panel** | **?** | — |
+| Instruments (fps, GPU) · hide all text · sound | T · H · N | — |
+| Fullscreen · save PNG | V · O | — |
+| Auto-tour | P | — |
+| Load your own song | drag & drop an audio file | — |
 
-Parámetros de la URL: `?sala=8` entra directo a una sala, `?recorrido=40` hace una presentación automática de 40 s por sala, `?medir` repite la medición del equipo, `?mudo` arranca en silencio, `?webgl` fuerza la versión WebGL2 y `?perfil=alto|medio|basico|debil|movil` simula otro equipo.
+URL parameters: `?sala=11` opens a room directly, `?recorrido=40` runs a 40 s-per-room tour, `?medir` re-runs the hardware benchmark, `?mudo` starts muted, `?webgl` forces the WebGL2 version, `?perfil=alto|medio|basico|debil|movil` simulates another machine.
 
-## Tecnología
+## How it adapts to your hardware
 
-- **WebGPU**: cómputo y render. Cada sala es una clase con sus sombreadores WGSL (`js/demos/`). Hay N-cuerpos, partículas, mallas de fluidos y LBM, raymarching y trazado de caminos.
-- **WebGL2 de respaldo**: 7 salas simplificadas (`js/gl/fallback.js`) para navegadores sin WebGPU.
-- **Audio generativo**: Web Audio sin muestras (`js/sonido.js`). Cada sala tiene una «partitura» que lee la simulación. En Atractores suena una nota cada vez que la trayectoria cruza el plano x = 0, y su altura sale de z. En Chladni suena la frecuencia del modo, el viento silba según su rapidez y Señal tiene un secuenciador de cinco estilos con forma de pista.
-- **Post-proceso común**: negros cálidos, grano de película fino y bloom contenido.
-- **Diseño**: STIX Two Text y Geist Mono. Cada sala tiene una firma de harmonógrafo y una ficha como la cédula de un museo.
+1. **Detect.** WebGPU support, adapter limits and GPU class (Apple silicon, discrete, integrated, software). No WebGPU → try WebGL2.
+2. **Measure** (~3 s, cached for 30 days). FP32 FMA throughput, memory bandwidth and a 1080p test frame pick a starting quality per room (low / medium / high / max: internal resolution 50–100 % plus particle, step and sample counts).
+3. **Govern.** Each room tunes its load live from GPU time; if frames stay over budget for 5 s, the gallery drops a whole preset and remembers it.
 
-## Rendimiento y equipos distintos
+On an Apple M5 MacBook at 1512×945 (~3.1–3.8 TFLOP/s) all twelve rooms run at max quality at 58–60 fps. Rendering is capped at 60 fps (`?fps=` changes it), and the gallery pauses and releases the GPU when the window loses focus.
 
-Umbral se adapta en tres pasos:
+## Tech
 
-1. **Detección.** Revisa si hay WebGPU, los límites del adaptador y la clase de GPU según lo que reporta (Apple silicon, dedicada, integrada o por software). Si no hay WebGPU, prueba WebGL2.
-2. **Medición** (unos 3 s, se guarda 30 días). Mide FP32 con FMA, el ancho de banda de memoria y un cuadro de prueba a 1080p. Con eso elige la calidad inicial de cada sala entre baja, media, alta y máxima, que cambian la resolución interna (50–100 %) y la carga (partículas, pasos, muestras).
-3. **Gobernador.** Cada sala ajusta su carga en vivo según el tiempo de GPU. Si aun así el cuadro se pasa de presupuesto durante 5 s, Umbral baja un preset completo y lo recuerda.
+- **WebGPU** compute + render, one class per room with hand-written WGSL (`js/demos/`): N-body, particles, fluid grids and LBM, raymarching, path tracing.
+- **WebGL2 fallback**: 7 simplified rooms (`js/gl/`).
+- **Generative audio** with Web Audio and no samples (`js/sonido.js`). Each room has a *score* that reads the simulation — a note on every Poincaré-section crossing in *Atractores*, the mode frequency in *Chladni*, wind that whistles with its speed. `js/pista.js` analyses your own songs (spectral flux, bands, BPM).
+- **No build step, no dependencies to install.** Plain ES modules; the only vendored library is lil-gui.
 
-Medido en un MacBook (Apple M5) a 1512×945: unos 3.1–3.8 TFLOP/s, las 12 salas en calidad máxima a 58–60 fps. El render tiene un tope de 60 fps (`?fps=` lo cambia). Cuando la ventana pierde el foco, Umbral se pausa y suelta la GPU.
+## Run it locally
 
-## Correrlo en tu equipo
-
-No hace falta instalar nada. Basta un servidor estático, porque los módulos ES no cargan desde `file://`:
+ES modules don't load from `file://`, so serve the folder with any static server:
 
 ```sh
-npx serve .                 # o bien:
+npx serve .
+# or
 python3 -m http.server 8000
 ```
 
-Abre `http://localhost:3000` (o `:8000`). WebGPU necesita un contexto seguro: `localhost` o HTTPS. GitHub Pages ya sirve por HTTPS.
+Open `http://localhost:3000` (or `:8000`). WebGPU needs a secure context: `localhost` or HTTPS.
 
-## Créditos
+## Credits
 
-- Diseño, simulaciones, sonido y código: **Hermann**.
-- *Señal* es un homenaje a **Hydra** de Olivia Jack. La implementación es propia.
-- *Viento urbano* reutiliza la geometría, los sensores y los pesos de la PINN de mi proyecto wind-pinn. La voz del sintetizador y el secuenciador vienen de mi sinte spectre-daw.
-- Tipografías: **STIX Two Text** (STI Pub Companies) y **Geist Mono** (Vercel), ambas con licencia SIL Open Font License 1.1.
-- Gray-Scott, Physarum (Jeff Jones), fluido estable (Jos Stam), Lattice Boltzmann, Mandelbulb (Daniel White y Paul Nylander) y Mandelbox (Tom Lowe) son las ideas sobre las que se construyen las salas.
+- Design, simulations, sound and code: **casiangel333** ([HermannPR](https://github.com/HermannPR)).
+- *Señal* is an homage to [Hydra](https://hydra.ojack.xyz) by Olivia Jack, with its own implementation.
+- The rooms build on Gray–Scott, Physarum (Jeff Jones), Stable Fluids (Jos Stam), Lattice Boltzmann, the Mandelbulb (Daniel White and Paul Nylander) and the Mandelbox (Tom Lowe).
+- Panel UI: [lil-gui](https://lil-gui.georgealways.com) by George Michael Brower (MIT).
+- Fonts: **STIX Two Text** and **Geist Mono**, SIL Open Font License 1.1.
 
-## Licencia
+## License
 
-**TODO (Hermann): confirmar la licencia.** La sugerencia es MIT para el código (ver `LICENCIA-PENDIENTE.md`). Las fuentes conservan su licencia OFL.
+Code: [MIT](LICENSE) © 2026 casiangel333 (HermannPR). Fonts keep their OFL license (`fuentes/OFL.txt`); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 
-<a id="english"></a>
+<a id="español"></a>
 
-## English
+## Español
 
-**UMBRAL · VX** (*umbral* is Spanish for threshold; VX = Visual eXperiments) is a heavy-compute gallery for the browser: twelve real-time GPU simulations built with WebGPU, each with its own generative soundtrack. It includes colliding galaxies, chaotic attractors, double pendulums, Chladni plates, Gray-Scott reaction–diffusion, Physarum, Navier–Stokes ink, a Lattice Boltzmann wind tunnel compared live against a physics-informed neural network, Mandelbulb/Mandelbox raymarching, a progressive path tracer and a live-coded video synth.
+**UMBRAL · VX** es una galería de cómputo pesado: doce fenómenos simulados en tiempo real en la GPU con WebGPU, cada uno con su música generativa. Entras a una antesala, eliges una sala y cada sala le pide algo distinto a tu tarjeta gráfica. Antes de entrar, Umbral mide tu equipo en unos 3 segundos y te dice, sala por sala, a qué calidad corre.
 
-**[Open UMBRAL VX](https://umbral-vx.vercel.app)** · **[Watch the showcase video](TODO-enlace-al-video)**
+**[▶ Abrir UMBRAL VX](https://umbral-vx.vercel.app)** · **[Ver el video (60 s)](media/umbral-vx-promo.mp4)**
 
-- **Adapts to your hardware.** On first load it detects WebGPU and the adapter class, then runs a ~3 s benchmark (FP32 FMA, memory bandwidth and a 1080p frame test). From that it picks a starting quality for each room. An in-room governor tunes particle counts and steps, and a global governor drops a full preset if frames stay over budget. On an Apple M5 every room runs at max quality at 60 fps.
-- **Fallbacks.** Without WebGPU it switches to a 7-room WebGL2 version. Without either, it shows a polite page with the showcase video and stills.
-- **Generative audio.** Web Audio only, no samples. The sound reads the simulation, for example a note on every Poincaré-section crossing in the attractors.
-- **No build step.** Plain ES modules and hand-written WGSL. Serve the folder with any static server (`npx serve .`) or GitHub Pages.
+**Lo nuevo**
 
-**Controls:** ← → change room, ↑ ↓ room mode, Enter action, Space pause, Esc lobby, WASD/IJKL room controls, P auto-tour. Gamepads are supported.
+- **Tu propia música.** Suelta un archivo de audio en cualquier parte de la página (o usa el micrófono) y la sala *Señal* lo escucha y lo sigue: graves → golpe, medios → torsión, agudos → chispas, con detección de tempo y de drops. Ajusta sensibilidad, suavizado y cada banda desde el panel. Tu canción no sale de tu equipo.
+- **Un panel lateral que no se va solo.** Controles, acciones de la sala, tu música y la vista viven en un panel plegable. Ábrelo con `?`, ciérralo con `×`; recuerda cómo lo dejaste.
+- **Captura y comparte.** `O` guarda un PNG del cuadro, `V` pone pantalla completa y el panel copia el enlace directo a la sala.
+- **Paletas más sobrias** en *Bulbo* y **música nueva** en la antesala y en *Señal*.
 
-**Credits:** design, simulations, sound and code by Hermann. *Señal* is an homage to Hydra by Olivia Jack, with its own implementation. Fonts: STIX Two Text and Geist Mono (SIL OFL 1.1).
+**Controles:** ← → sala, ↑ ↓ modo, Enter acción, Espacio pausa, Esc antesala, WASD/IJKL controles de la sala, Q/E intensidad, X paleta, C acción secundaria, `?` panel, T instrumentos, H ocultar texto, N sonido, V pantalla completa, O guardar PNG, P recorrido automático. Funciona con mando.
 
-**License:** TODO, pending confirmation (MIT suggested).
+**Correrlo:** `npx serve .` o `python3 -m http.server 8000` y abre `localhost`.
+
+**Créditos:** diseño, simulaciones, sonido y código de **casiangel333** (HermannPR). *Señal* es un homenaje a Hydra de Olivia Jack, con implementación propia. Panel con lil-gui (MIT). Tipografías STIX Two Text y Geist Mono (SIL OFL 1.1).
+
+**Licencia:** código MIT © 2026 casiangel333 (HermannPR). Las fuentes conservan su licencia OFL.

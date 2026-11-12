@@ -87,8 +87,11 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     unit = vec3f(1.0) + (unit - 1.0) * soft;
     fill = ring[base + 2u].rgb;
   }
+  // galería (12 nov): la misma exposición que las paletas clásicas (antes ×1.7 y γ 0.85 quemaban las luces)
+  // y el color más sobrio, sobre todo en los cíclicos: la forma se lee por la luz y el color la acompaña
   let l = filmica(dot(raw.rgb, W3));
-  let lg = pow(clamp(l * 1.7, 0.0, 1.0), 0.85);
+  let lg = pow(clamp(l * 1.2, 0.0, 1.0), 1.3);
+  unit = mix(vec3f(dot(unit, W3)), unit, select(0.85, 0.6, u.dim.z < 5.5));
   textureStore(dst, id.xy, vec4f(unit * lg + fill * pow(1.0 - lg, 3.0), 1.0));
 }`;
 export default class Galvanizado {
@@ -111,8 +114,8 @@ export default class Galvanizado {
   }
   run(enc, palette, time) {
     const b = palette === 5;
-    // ciclico-A (4): N=2.0 con curva filmica (Hermann 10 oct 13:10, hoja rica/FILMICA-N.jpg); B: N=1.3; dos tonos: N=1.
-    this.ctx.device.queue.writeBuffer(this.ub,0,new Float32Array([this.ctx.W,this.ctx.H,palette,time % 9.6,0,b?14:20,b?1.3:(palette===4?2:1),b?0.05:0.03]));
+    // ciclico-A (4): N=0.8 y B: N=0.6 en la galería (el video usó N=2.0 y 1.3, que en vivo deshacían la forma); dos tonos: N=1.
+    this.ctx.device.queue.writeBuffer(this.ub,0,new Float32Array([this.ctx.W,this.ctx.H,palette,time % 9.6,0,b?14:20,b?0.6:(palette===4?0.8:1),b?0.05:0.03]));
     const p = this.ctx.cpass(enc);
     // Las paletas históricas pasan intactas, sin calcular suavizado.
     for(let i=palette>=4?0:2;i<3;i++) {

@@ -314,6 +314,9 @@ export default class Senal {
     this.vivoTxt = ''; this.calTxt = ''; this.calT = 0;
     this.estiloI = 0; this.i = 0;
     this.ponerEstilo(0);
+    // «tu música»: si hay una canción propia (o el micrófono), la sala la escucha a ella en vez de la máquina
+    this.pista = this.ctx.sonido && this.ctx.sonido.pista;
+    if (this.pista) this.quitarOyente = this.pista.alCambiar(() => this.codigo());
     const yo = this;
     window.__senal = {
       estilos: SENAL_ESTILOS.map((e) => e.nombre),
@@ -336,8 +339,18 @@ export default class Senal {
     this.P = JSON.parse(JSON.stringify(PARCHES[this.i]));
     this.linea = 0;
   }
+  get conPista() { return !!(this.pista && this.pista.activa); }
+  // lo que el panel puede elegir: carácter (cómo golpea), parche y tintas
+  opciones() { return { looks: SENAL_ESTILOS.map((e) => e.nombre), look: this.estiloI, parches: PARCHES.map((p) => p.nombre), parche: this.i, tintas: DUOS.map((d) => d.nombre), tinta: this.palette }; }
+  fijar(k, i) {
+    if (i < 0) return;
+    if (k === 'look') { const pal = this.palette, par = this.i; this.ponerEstilo(i); if (this.conPista) { this.cargar(par); this.palette = this.palPrev = pal; } }
+    else if (k === 'parche') this.cargar(i);
+    else if (k === 'tintas') { this.palette = this.palPrev = i; }
+    this.codigo();
+  }
   partitura() { const S = this.ctx.sonido, p = S && S.actual; return p && p.estado && !p.muerto && S.ac && S.ac.state === 'running' ? p : null; }
-  saltar() { const p = this.partitura(); if (p) p.saltarAlDrop(); }
+  saltar() { if (this.conPista) { this.pista.r.tDrop = performance.now() / 1000; return; } const p = this.partitura(); if (p) p.saltarAlDrop(); }
   // el parche como código: lo que se ve es exactamente lo que interpreta el sombreador
   lineas() {
     const P = this.P, L = [];
@@ -355,15 +368,17 @@ export default class Senal {
     return L;
   }
   codigo() {
-    const L = this.lineas(), E = SENAL_ESTILOS[this.estiloI];
+    const L = this.lineas(), E = SENAL_ESTILOS[this.estiloI], Pi = this.conPista ? this.pista : null;
     this.nLineas = L.length;
+    const cab = Pi ? `escuchar('${(Pi.nombre || '').replace(/'/g, '’').slice(0, 34)}'${Pi.bpm ? ', ~' + Pi.bpm : ''})` : `musica('${E.nombre}', ${E.bpm})`;
     this.ctx.capa.innerHTML = `<div style="position:absolute;left:44px;top:38px;font:400 13px/1.75 var(--mono);color:var(--papel-2);
       padding:14px 18px 14px 16px;background:rgba(12,11,9,.72);border-left:1px solid var(--acento)">
       <div class="rotulo-t" style="margin-bottom:6px">estilo ${this.estiloI + 1} / ${SENAL_ESTILOS.length} · parche ${this.i + 1} / ${PARCHES.length} · ${this.P.nombre}</div>
-      <div style="white-space:pre;color:var(--papel)"><span style="display:inline-block;width:14px"></span>musica('${E.nombre}', ${E.bpm})</div>
+      <div style="white-space:pre;color:var(--papel)"><span style="display:inline-block;width:14px"></span>${cab}</div>
       <div id="senal-vivo" style="white-space:pre;color:var(--acento);margin-bottom:4px"><span style="display:inline-block;width:14px"></span>  ${this.vivoTxt}</div>
       ${L.map((l, k) => `<div style="white-space:pre;${k === this.linea ? 'color:var(--papel)' : ''}"><span style="display:inline-block;width:14px;color:var(--acento)">${k === this.linea ? '›' : ''}</span>${k ? '  ' : ''}${l.txt}</div>`).join('')}
-      <div class="rotulo" style="margin-top:10px;color:var(--papel-3)">inspirado en Hydra (hydra.ojack.xyz) · implementación propia</div></div>`;
+      <div class="rotulo" style="margin-top:10px;color:var(--papel-3)">${Pi ? 'carácter · ' + E.nombre + ' · ↑ ↓ lo cambian' : 'suelta aquí tu canción · o ábrela en el panel (?)'}</div>
+      <div class="rotulo" style="margin-top:2px;color:var(--papel-3)">inspirado en Hydra (hydra.ojack.xyz) · implementación propia</div></div>`;
     this.vivoEl = document.getElementById('senal-vivo');
   }
   ajustar(dir) {
@@ -401,6 +416,7 @@ export default class Senal {
   }
   // la línea de tiempo de la música (o un pulso de reloj si todavía no hay audio)
   audio() {
+    if (this.conPista) return this.pista.estado();
     const p = this.partitura();
     if (p) { p.estilo(this.estiloI); const tv = p.ahora(), e = p.estado(tv); e.tv = tv; e.real = true; return e; }
     const E = SENAL_ESTILOS[this.estiloI], tv = (performance.now() - this.t0) / 1000, beat = 60 / E.bpm;
@@ -432,7 +448,11 @@ export default class Senal {
     this.reac = clamp(this.reac + (inp.r2 - inp.l2) * dt, 0, 2);
 
     // ---- envolventes a partir de la música que se oye ----
-    const A = this.A = this.audio(), tv = A.tv, V = VISTA[this.estiloI], R = this.reac;
+    const A = this.A = this.audio(), tv = A.tv, R = this.reac;
+    // con tu música, el panel decide cuánto pesa cada banda; «destellos» apaga negativos y fogonazos
+    const aj = this.pista ? this.pista.ajustes : null, V0 = VISTA[this.estiloI];
+    const V = aj ? { ...V0, golpe: V0.golpe * (A.pista ? aj.graves : 1), tor: V0.tor * (A.pista ? aj.medios : 1), chispas: V0.chispas * (A.pista ? aj.agudos : 1),
+      destello: V0.destello * (aj.destellos ? 1 : 0.15), glitch: V0.glitch * (aj.destellos ? 1 : 0.3), inv: V0.inv && aj.destellos } : V0;
     const env = (t0, k) => (t0 > -90 && tv >= t0 ? Math.exp(-(tv - t0) * k) : 0);
     const kick = env(A.tKick, 9) * Math.min(1, (A.kick || 0.8) * 1.1), caja = env(A.tCaja, 8);
     const drop = env(A.tDrop, 1.1), dropG = env(A.tDrop, 6);
@@ -511,7 +531,11 @@ export default class Senal {
   // HUD: línea viva de la música y nivel real de calidad (sin rehacer el DOM cada cuadro)
   hud(A, dt) {
     let txt;
-    if (A.real && A.seccion) {
+    if (A.pista) {
+      const Pi = this.pista, b = A.bandas || [0, 0, 0], bar = (v) => '▁▂▃▄▅▆▇█'[Math.max(0, Math.min(7, Math.round(v * 7)))];
+      const t = Pi.fuente === 'archivo' ? `${Math.floor(Pi.pos() / 60)}:${String(Math.floor(Pi.pos() % 60)).padStart(2, '0')}` : 'en vivo';
+      txt = `.${SEC_NOMBRE[A.seccion] || A.seccion}  ${bar(b[0])}${bar(b[1])}${bar(b[2])}  ${Pi.fuente === 'archivo' && !Pi.sonando ? 'en pausa · ' : ''}${t}`;
+    } else if (A.real && A.seccion) {
       const cel = 16, llenas = Math.round(A.prog * cel);
       txt = `.${SEC_NOMBRE[A.seccion] || A.seccion}  ${'▮'.repeat(llenas)}${'▯'.repeat(cel - llenas)}  ${A.compas + 1} / ${A.compases}`;
     } else txt = '.pulso()  (el audio arranca con la primera tecla)';
@@ -524,7 +548,7 @@ export default class Senal {
       if (el && s !== this.calTxt) { this.calTxt = s; el.textContent = s; }
     }
   }
-  lectura() { const A = this.A || {}; return `${SENAL_ESTILOS[this.estiloI].nombre}${A.seccion ? ' · ' + A.seccion : ''} · nivel real ${Math.round(this.nivel * 100)} %`; }
+  lectura() { const A = this.A || {}; if (A.pista) return `tu música · ${this.pista.nombre}${A.seccion ? ' · ' + A.seccion : ''}`; return `${SENAL_ESTILOS[this.estiloI].nombre}${A.seccion ? ' · ' + A.seccion : ''} · nivel real ${Math.round(this.nivel * 100)} %`; }
   stats() {
     const W = this.ctx.W, H = this.ctx.H, iw = Math.round(W * this.esc), ih = Math.round(H * this.esc);
     return [['píxeles generados / frame', (iw * ih).toLocaleString('es-ES'), true], ['nivel real', Math.round(this.nivel * 100) + ' %'], ['resolución interna', `${iw} × ${ih}`],
@@ -533,6 +557,7 @@ export default class Senal {
   destroy() {
     this.tex.forEach((t) => t.destroy()); [this.u, this.uc, this.up, this.ur, this.ps].forEach((b) => b.destroy());
     this.ctx.capa.innerHTML = '';
+    if (this.quitarOyente) this.quitarOyente();
     if (window.__senal && window.__senal._yo === this) delete window.__senal;
   }
 }

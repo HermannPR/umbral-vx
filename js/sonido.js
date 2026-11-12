@@ -18,12 +18,12 @@ export class Sonido {
     try { const q = new URLSearchParams(location.search); this.silencio = q.has('test') || q.has('mudo'); } catch { this.silencio = false; }
   }
   // El contexto se crea perezosamente (el kiosco permite autoplay; en otro navegador espera un gesto).
-  iniciar() {
+  iniciar(forzar = false) {
     // En la web (fuera del servidor local) el navegador no deja sonar sin un gesto y avisa en la consola por cada
     // intento: se espera a la primera tecla o clic. En el kiosco local (autoplay permitido) arranca al abrir, como siempre.
     const local = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
     const gesto = !navigator.userActivation || navigator.userActivation.hasBeenActive;
-    if (!local && !gesto) return;
+    if (!local && !gesto && !forzar) return;      // forzar: «tu música» decodifica aunque aún no haya sonado nada (suena con el primer gesto)
     if (this.ac) { if (this.ac.state === 'suspended' && !this.pausado) this.ac.resume().catch(() => {}); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
@@ -45,6 +45,10 @@ export class Sonido {
     this.fft = new Uint8Array(this.analizador.frequencyBinCount); this.bandasS = [0, 0, 0];
     this.revIn = ac.createGain(); this.revIn.gain.value = 0.9;
     this.revIn.connect(this.rev).connect(this.master);
+    // la música generativa pasa por su propio volumen: cuando suena «tu música» (Señal) se apaga sin cortar el secuenciador
+    this.gen = ac.createGain(); this.gen.connect(this.master); this.gen.connect(this.analizador);
+    this.genRev = ac.createGain(); this.genRev.connect(this.revIn);
+    if (this.genApagada) { this.gen.gain.value = 0; this.genRev.gain.value = 0; }
     // ruido rosa en bucle (filtro de Kellet)
     const nl = ac.sampleRate * 4, nb = ac.createBuffer(1, nl, ac.sampleRate), nd = nb.getChannelData(0);
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
@@ -68,6 +72,13 @@ export class Sonido {
   pausar() { this.pausado = true; if (!this.ac) return; this.aplicarVolumen(0.15); setTimeout(() => { if (this.pausado && this.ac) this.ac.suspend().catch(() => {}); }, 220); }
   reanudar() { this.pausado = false; if (!this.ac) return; this.ac.resume().catch(() => {}); this.aplicarVolumen(0.8); }
 
+  // enciende o apaga la música generativa (fundido corto); la usa «tu música»
+  generativa(on, t = 0.5) {
+    this.genApagada = !on;
+    if (!this.ac || !this.gen) return;
+    const now = this.ac.currentTime;
+    for (const g of [this.gen.gain, this.genRev.gain]) { g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.linearRampToValueAtTime(on ? 1 : 0, now + t); }
+  }
   // cambia de partitura con fundido cruzado
   partitura(nombre) {
     if (!this.ac) { this.pendiente = nombre; return; }
@@ -77,7 +88,7 @@ export class Sonido {
     const P = PARTITURAS[nombre] || PARTITURAS.silencio;
     const bus = this.ac.createGain(); bus.gain.value = 0;
     const envio = this.ac.createGain(); envio.gain.value = P.envio ?? 1;
-    bus.connect(this.master); bus.connect(envio).connect(this.revIn); bus.connect(this.analizador);
+    bus.connect(this.gen); bus.connect(envio).connect(this.genRev);
     this.actual = new P(this, bus); this.actual.nombre = nombre;
     bus.gain.setTargetAtTime(1, this.ac.currentTime + 0.25, 0.6);
   }
@@ -210,8 +221,9 @@ const ESTILOS = [
     forma: [['intro', 4], ['subida', 8], ['drop', 16], ['pausa', 8], ['subida', 4], ['drop', 16, 1]], bucle: 3,
     acordes: [[53, 56, 60, 65], [53, 56, 61, 65], [51, 56, 60, 63], [51, 55, 58, 63]],   // Fm · Db · Ab · Eb
     graves: [41, 37, 44, 39],
-    motivo: [[0, 72, 3], [3, 75, 3], [6, 72, 2], [8, 70, 4], [12, 68, 4], [16, 67, 3], [19, 68, 3], [22, 70, 2], [24, 65, 8],
-      [32, 72, 3], [35, 75, 3], [38, 77, 2], [40, 75, 4], [44, 72, 4], [48, 70, 6], [54, 68, 2], [56, 67, 8]],
+    // gancho en tresillo (3·3·2): sube y vuelve en Fm, cae en Db, se estira en Ab y deja la puerta abierta en Eb (termina en Do, la quinta de Fa)
+    motivo: [[0, 72, 3], [3, 75, 3], [6, 77, 2], [8, 75, 4], [12, 72, 4], [16, 73, 3], [19, 72, 3], [22, 70, 2], [24, 68, 8],
+      [32, 72, 3], [35, 75, 3], [38, 79, 2], [40, 80, 4], [44, 75, 4], [48, 77, 3], [51, 75, 3], [54, 70, 2], [56, 72, 8]],
     racks(m) {
       return {
         bajo: m.rackBajo({ oscs: [['sawtooth', 0, 0], ['sawtooth', 0, 11], ['square', -12, 0]], sat: 4, q: 7, formantes: true, sub: 0.6, g: 0.34 }),
@@ -272,10 +284,11 @@ const ESTILOS = [
     forma: [['intro', 4], ['subida', 4], ['drop', 16], ['pausa', 8], ['subida', 4], ['drop', 16, 1]], bucle: 3,
     acordes: [[57, 60, 64, 69], [57, 60, 65, 69], [55, 60, 64, 67], [55, 59, 62, 67]],   // Am · F · C · G
     graves: [33, 29, 36, 31],
-    melodia: [[0, 76, 4], [4, 74, 2], [6, 72, 2], [8, 74, 4], [12, 76, 4], [16, 79, 6], [22, 76, 2], [24, 74, 8],
-      [32, 72, 4], [36, 74, 2], [38, 76, 2], [40, 69, 8], [48, 67, 4], [52, 69, 4], [56, 72, 4], [60, 71, 4],
-      [64, 76, 4], [68, 79, 4], [72, 81, 8], [80, 79, 4], [84, 76, 4], [88, 74, 8],
-      [96, 72, 4], [100, 74, 4], [104, 76, 4], [108, 79, 4], [112, 81, 12]],
+    // pregunta y respuesta en tresillo: A (Am–F) · A' (C–G) · A otra vez · y la vuelta que sube hasta La sobre G
+    melodia: [[0, 76, 3], [3, 74, 3], [6, 72, 2], [8, 69, 4], [12, 72, 4], [16, 77, 3], [19, 76, 3], [22, 74, 2], [24, 72, 8],
+      [32, 79, 3], [35, 76, 3], [38, 74, 2], [40, 72, 4], [44, 76, 4], [48, 74, 3], [51, 72, 3], [54, 71, 2], [56, 74, 8],
+      [64, 76, 3], [67, 74, 3], [70, 72, 2], [72, 69, 4], [76, 72, 4], [80, 77, 3], [83, 76, 3], [86, 77, 2], [88, 81, 8],
+      [96, 79, 3], [99, 81, 3], [102, 79, 2], [104, 76, 4], [108, 74, 4], [112, 74, 3], [115, 76, 3], [118, 79, 2], [120, 81, 8]],
     racks(m) {
       return {
         bajo: m.rackBajo({ oscs: [['sawtooth', 0, 0], ['sawtooth', 0, -9]], sat: 1.3, q: 4, sub: 0.35, g: 0.3 }),
@@ -787,14 +800,41 @@ export class SenalMaquina extends Base {
 const PARTITURAS = {
   silencio: class extends Base {},
 
-  // Antesala: un acorde quieto cuya raíz cambia con la sala elegida; un clic de madera al moverse.
+  // Antesala: un acorde quieto cuya raíz cambia con la sala elegida, y encima una cajita de música lenta:
+  // un motivo pentatónico de cinco notas que se dice dos veces (la segunda queda en suspenso, en la quinta)
+  // y se contesta en la tónica; luego calla un compás. Cada sala elegida trae un motivo nuevo en su tono.
   antesala: class extends Base {
-    init() { this.d = this.capa(this.S.dron([mtof(38), mtof(45), mtof(52)], { tipo: 'sine', corte: 700, g: 0.05, lfo: 0.07, lfoProf: 150, dest: this.bus })); }
+    init() {
+      this.d = this.capa(this.S.dron([mtof(38), mtof(45), mtof(52)], { tipo: 'sine', corte: 700, g: 0.05, lfo: 0.07, lfoProf: 150, dest: this.bus }));
+      this.raiz = 38; this.k = 0; this.cambio = true;
+      const paso = () => { if (this.muerto) return; try { this.tic(); } catch {} this.timer = setTimeout(paso, 430); };
+      this.timer = setTimeout(paso, 2200);
+    }
+    nuevoMotivo() {
+      const esc = [0, 2, 4, 7, 9, 12, 14, 16, 19];
+      let i = 3 + Math.floor(Math.random() * 3);
+      this.motivo = [0, 1, 2, 3, 4].map((j) => { if (j) i = clamp(i + [-2, -1, -1, 1, 1, 2][Math.floor(Math.random() * 6)], 1, esc.length - 1); return esc[i]; });
+    }
+    tic() {
+      const S = this.S;
+      if (!S.ac || S.pausado || S.ac.state !== 'running') return;
+      const fase = this.k % 32; this.k++;
+      if (fase === 0 && this.cambio) { this.nuevoMotivo(); this.cambio = false; }
+      const bloque = fase >> 3, p = fase & 7, j = [0, 1, 2, 4, 6].indexOf(p);
+      if (bloque === 3 || j < 0) return;
+      let st = this.motivo[j];
+      if (j === 4) st = bloque === 1 ? 7 : bloque === 2 ? 12 : st;        // pregunta en la quinta, respuesta en la tónica
+      const m = this.raiz + 36 + st, largo = j === 4;
+      S.voz({ f: mtof(m), tipo: 'sine', tipo2: 'triangle', det: 1200, a: 0.004, d: largo ? 1.8 : 0.9, s: 0, r: largo ? 2.2 : 1.2, g: largo ? 0.034 : 0.026, corte: 2600, pan: (j - 2) * 0.18, dest: this.bus });
+      if (bloque === 2 && j === 4) S.voz({ f: mtof(m - 12), tipo: 'sine', a: 0.01, d: 2.4, s: 0, r: 2.6, g: 0.03, corte: 1200, dest: this.bus });
+    }
+    salir(t) { clearTimeout(this.timer); super.salir(t); }
     evento(n, v) {
       const S = this.S;
       if (n === 'mover') {
         S.voz({ f: 1320, tipo: 'sine', a: 0.002, d: 0.05, r: 0.05, g: 0.04, corte: 4000, dest: this.bus });
         const r = 38 + [0, 5, 7, 3, 10, 2, 9, 4, 11, 6, 8][v.i % 11];
+        if (r !== this.raiz) { this.raiz = r; this.cambio = true; this.k = 0; }
         this.d.frec([mtof(r), mtof(r + 7), mtof(r + 14)], 0.6);
       } else if (n === 'elegir') {
         S.voz({ f: mtof(74), tipo: 'triangle', a: 0.005, d: 0.4, r: 0.8, g: 0.08, corte: 3000, dest: this.bus });
