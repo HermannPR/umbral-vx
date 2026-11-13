@@ -82,7 +82,7 @@ URL parameters: `?sala=11` opens a room directly, `?recorrido=40` runs a 40 s-pe
 2. **Measure** (~3 s, cached for 30 days). FP32 FMA throughput, memory bandwidth and a 1080p test frame pick a starting quality per room (low / medium / high / max: internal resolution 50–100 % plus particle, step and sample counts).
 3. **Govern.** Each room tunes its load live from GPU time; if frames stay over budget for 5 s, the gallery drops a whole preset and remembers it.
 
-On an Apple M5 MacBook at 1512×945 (~3.1–3.8 TFLOP/s) all twelve rooms run at max quality at 58–60 fps. Rendering is capped at 60 fps (`?fps=` changes it), and the gallery pauses and releases the GPU when the window loses focus.
+On an Apple M5 MacBook at 1512×945 (~3.1–3.8 TFLOP/s) all twelve rooms run at max quality at 58–60 fps. Rendering is capped at 60 fps by default; the side panel switches it to 120 for 120 Hz displays (remembered between visits, or `?fps=120`). Video recording stays at 60 fps, and the gallery pauses and releases the GPU when the window loses focus.
 
 ## Tech
 

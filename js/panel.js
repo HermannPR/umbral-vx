@@ -84,7 +84,7 @@ export class Panel {
     const v = this.seccion('pn-vista', 'Vista y sonido', 'vista');
     const A = this.acc;
     this.v = {
-      sonido: true, volumen: 0.55, ficha: true, recorrido: false, calidad: 'automática', formato: 'pantalla',
+      sonido: true, volumen: 0.55, ficha: true, recorrido: false, calidad: 'automática', formato: 'pantalla', fps: 60,
       pantalla: () => A.pantallaCompleta(), captura: () => A.captura(), enlace: () => A.copiarEnlace(),
       ocultar: () => A.ocultarTodo(), antesala: () => A.antesala(), escenario: () => A.escenario(), grabar: () => A.grabar(),
     };
@@ -95,6 +95,7 @@ export class Panel {
       recorrido: v.add(this.v, 'recorrido').name('recorrido automático').onChange((x) => A.recorrido(x)),
       calidad: v.add(this.v, 'calidad', A.calidades).name('calidad').onChange((x) => A.calidad(x)),
       formato: v.add(this.v, 'formato', A.formatos).name('formato del lienzo').onChange((x) => A.formato(x)),
+      fps: v.add(this.v, 'fps', A.fpsOpciones).name('fps máximos (el video graba a 60)').onChange((x) => A.fps(x)),
     };
     this.cGrabar = v.add(this.v, 'grabar').name(A.puedeGrabar ? '● grabar video  ·  G' : 'grabar video (no disponible aquí)');
     if (!A.puedeGrabar) this.cGrabar.disable();
@@ -107,7 +108,7 @@ export class Panel {
   }
   // refleja el estado real (lo cambian también las teclas)
   vista(e) {
-    for (const k of ['sonido', 'ficha', 'recorrido', 'calidad', 'volumen', 'formato']) {
+    for (const k of ['sonido', 'ficha', 'recorrido', 'calidad', 'volumen', 'formato', 'fps']) {
       if (e[k] === undefined || this.v[k] === e[k]) continue;
       this.v[k] = e[k]; this.cv[k].updateDisplay();
     }

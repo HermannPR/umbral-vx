@@ -17,7 +17,16 @@ const canvas = $('c');
 const params = new URLSearchParams(location.search);
 const TEST = params.has('test');
 const REC_S = +(params.get('recorrido') || 45);          // segundos por sala en el recorrido
-const FPS_MAX = +(params.get('fps') || 60);               // tope: no competir con otras apps (un juego abierto)
+// tope de fps: 60 por defecto para no competir con otras apps (un juego abierto); 120 se elige en el panel
+// (se recuerda) o con ?fps=120. El video siempre graba a 60: Reels, TikTok y YouTube no pasan de ahí.
+const FPS_OPCIONES = [60, 120];
+let FPS_MAX = +(params.get('fps') || leerFps() || 60);
+function leerFps() { try { const x = +localStorage.getItem('umbral.fps'); return FPS_OPCIONES.includes(x) ? x : 0; } catch { return 0; } }
+function fijarFps(x) {
+  x = +x; if (!FPS_OPCIONES.includes(x)) return;
+  FPS_MAX = x; try { localStorage.setItem('umbral.fps', String(x)); } catch {}
+  aviso(`Hasta ${x} fps`); sincronizarPanel();
+}
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- errores en pantalla + log al servidor local ----------
@@ -588,6 +597,7 @@ function accPanel() {
       antesala && antesala.actualizar(estado());
     },
     calidades: ['automática', ...CALIDADES.map((c) => c.nombre)],
+    fpsOpciones: FPS_OPCIONES, fps: (x) => fijarFps(x),
     pista,
     senal: () => (current && idx === iSenal && modo === 'sala' ? current : null),
     cargarCancion,
@@ -596,7 +606,7 @@ function accPanel() {
 }
 function sincronizarPanel() {
   if (!panel) return;
-  panel.vista({ sonido: !sonido.mudo, volumen: sonido.vol, ficha: fichaOn, recorrido, calidad: calidadManual === null ? 'automática' : CALIDADES[calidadManual].nombre, formato: formatoNombre });
+  panel.vista({ sonido: !sonido.mudo, volumen: sonido.vol, ficha: fichaOn, recorrido, calidad: calidadManual === null ? 'automática' : CALIDADES[calidadManual].nombre, formato: formatoNombre, fps: FPS_MAX });
 }
 function alternarRecorrido() {
   recorrido = !recorrido; aviso(recorrido ? `Recorrido · ${REC_S} s por sala` : 'Recorrido detenido');
