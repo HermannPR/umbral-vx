@@ -84,9 +84,9 @@ export class Panel {
     const v = this.seccion('pn-vista', 'Vista y sonido', 'vista');
     const A = this.acc;
     this.v = {
-      sonido: true, volumen: 0.55, ficha: true, recorrido: false, calidad: 'automática',
+      sonido: true, volumen: 0.55, ficha: true, recorrido: false, calidad: 'automática', formato: 'pantalla',
       pantalla: () => A.pantallaCompleta(), captura: () => A.captura(), enlace: () => A.copiarEnlace(),
-      ocultar: () => A.ocultarTodo(), antesala: () => A.antesala(),
+      ocultar: () => A.ocultarTodo(), antesala: () => A.antesala(), escenario: () => A.escenario(), grabar: () => A.grabar(),
     };
     this.cv = {
       sonido: v.add(this.v, 'sonido').name('sonido').onChange((x) => A.sonido(x)),
@@ -94,7 +94,11 @@ export class Panel {
       ficha: v.add(this.v, 'ficha').name('ficha de la sala').onChange((x) => A.ficha(x)),
       recorrido: v.add(this.v, 'recorrido').name('recorrido automático').onChange((x) => A.recorrido(x)),
       calidad: v.add(this.v, 'calidad', A.calidades).name('calidad').onChange((x) => A.calidad(x)),
+      formato: v.add(this.v, 'formato', A.formatos).name('formato del lienzo').onChange((x) => A.formato(x)),
     };
+    this.cGrabar = v.add(this.v, 'grabar').name(A.puedeGrabar ? '● grabar video  ·  G' : 'grabar video (no disponible aquí)');
+    if (!A.puedeGrabar) this.cGrabar.disable();
+    v.add(this.v, 'escenario').name('modo escenario (sin texto, pantalla completa)');
     v.add(this.v, 'pantalla').name('pantalla completa  ·  V');
     v.add(this.v, 'captura').name('guardar imagen PNG  ·  O');
     v.add(this.v, 'enlace').name('copiar enlace a esta sala');
@@ -103,10 +107,16 @@ export class Panel {
   }
   // refleja el estado real (lo cambian también las teclas)
   vista(e) {
-    for (const k of ['sonido', 'ficha', 'recorrido', 'calidad', 'volumen']) {
+    for (const k of ['sonido', 'ficha', 'recorrido', 'calidad', 'volumen', 'formato']) {
       if (e[k] === undefined || this.v[k] === e[k]) continue;
       this.v[k] = e[k]; this.cv[k].updateDisplay();
     }
+  }
+  // grabando: los botones de grabar dicen «detener»; el formato no se cambia a media toma
+  grabacion(on) {
+    if (this.cGrabar) this.cGrabar.name(on ? '■ detener la grabación  ·  G' : '● grabar video  ·  G');
+    if (this.cv.formato) { if (on) this.cv.formato.disable(); else this.cv.formato.enable(); }
+    if (this.cCancion) this.cCancion.name(on ? '■ detener la grabación' : '● grabar la canción completa en video');
   }
   get instrumentosVisibles() { return this.abierto && this.guis.instrumentos && !this.guis.instrumentos._closed; }
   instrumentos(html) { if (this.instrumentosVisibles) this.insEl.innerHTML = html; }
@@ -143,9 +153,10 @@ export class Panel {
         <div class="pm-nombre"></div><div class="pm-meta"></div>
         <canvas class="pm-onda" aria-label="Forma de onda: haz clic para saltar"></canvas>
         <div class="pm-fila"><button type="button" class="pm-play">▶ reproducir</button><button type="button" class="pm-otra">otra</button><button type="button" class="pm-quitar">quitar</button></div>
+        <div class="pm-fila pm-tempo" hidden><span class="pm-tt">tempo</span><button type="button" data-t="0.5">÷ 2</button><button type="button" data-t="1">tal cual</button><button type="button" data-t="2">× 2</button></div>
       </div>
       <div class="pm-fila"><button type="button" class="pm-mic">usar el micrófono</button></div>
-      <p class="pm-nota">Tu canción no sale de tu equipo: se escucha y se analiza en el navegador. Señal la sigue en vivo: graves → golpe, medios → torsión, agudos → chispas.</p>`;
+      <p class="pm-nota">Tu canción no sale de tu equipo: se escucha y se analiza en el navegador. Señal la escucha completa una vez y sabe dónde caen los pulsos, las subidas y los drops, y en qué tonalidad va: graves → golpe, medios → torsión, agudos → chispas, tonalidad → color.</p>`;
     g.$children.appendChild(caja);
     const q = (s) => caja.querySelector(s);
     const input = q('input[type=file]'), zona = q('.pm-soltar');
@@ -155,6 +166,7 @@ export class Panel {
     q('.pm-otra').addEventListener('click', elegir);
     q('.pm-play').addEventListener('click', () => P.alternar());
     q('.pm-quitar').addEventListener('click', () => P.quitar());
+    caja.querySelectorAll('.pm-tempo button').forEach((b) => b.addEventListener('click', () => P.fijarTempo(+b.dataset.t)));
     q('.pm-mic').addEventListener('click', () => (P.fuente === 'mic' ? P.quitar() : P.microfono().catch((e) => A.aviso(e.name === 'NotAllowedError' ? 'Sin permiso para el micrófono' : e.message))));
     const onda = this.onda = q('.pm-onda');
     onda.addEventListener('pointerdown', (e) => { if (P.fuente !== 'archivo') return; const r = onda.getBoundingClientRect(); P.buscar(((e.clientX - r.left) / r.width) * P.dur); });
@@ -179,7 +191,28 @@ export class Panel {
         tintas: im.add(val, 'tintas', o.tintas).name('tintas').onChange((v) => s.fijar('tintas', o.tintas.indexOf(v))),
       };
       this.valImg = val; this.senalRef = s;
+      // color y escenas que siguen la música
+      const F = o.fx;
+      im.add(F, 'color', o.colores).name('color').onChange((v) => s.efecto('color', v));
+      im.add(F, 'escenas', o.escenas).name('escenas').onChange((v) => s.efecto('escenas', v));
+      const fx = g.addFolder('Efectos');
+      fx.add(F, 'osciloscopio').name('osciloscopio').onChange((v) => s.efecto('osciloscopio', v));
+      fx.add(F, 'zoom', 0, 1, 0.05).name('zoom radial en golpes').onChange((v) => s.efecto('zoom', v));
+      fx.add(F, 'barrido', 0, 1, 0.05).name('líneas de monitor').onChange((v) => s.efecto('barrido', v));
+      fx.add(F, 'mosh', 0, 1, 0.05).name('datamosh').onChange((v) => s.efecto('mosh', v));
+      fx.add(F, 'espejo', o.espejos).name('espejo de pantalla').onChange((v) => s.efecto('espejo', v));
+      fx.add(F, 'estrobo').name('estrobo en el drop').onChange((v) => s.efecto('estrobo', v));
+      fx.close();
     }
+    // video de la canción completa (el formato se elige en «Vista y sonido»)
+    const vid = g.addFolder('Video');
+    this.vidCancion = { f: () => A.grabarCancion(), formato: () => A.abrirVista && A.abrirVista() };
+    this.cCancion = vid.add(this.vidCancion, 'f').name('● grabar la canción completa en video');
+    if (!A.puedeGrabar) this.cCancion.disable();
+    const nv = document.createElement('p'); nv.className = 'pm-nota';
+    nv.textContent = 'Graba en tiempo real lo que se ve y lo que suena, de 0:00 al final, y lo descarga solo (MP4 si el navegador puede; si no, WebM). Para Reels o TikTok elige «vertical 9:16» en Vista y sonido. G graba o detiene en cualquier momento.';
+    vid.$children.appendChild(nv);
+    this.grabacion(A.grabando && A.grabando());
     const pintar = () => {
       const hay = P.fuente === 'archivo', mic = P.fuente === 'mic';
       q('.pm-pista').hidden = !hay; zona.hidden = hay;
@@ -191,7 +224,9 @@ export class Panel {
         q('.pm-nombre').textContent = P.nombre;
         q('.pm-play').textContent = P.sonando ? '❚❚ pausa' : '▶ reproducir';
       }
-      this.metaT = 0; this.ondaPos = -1;
+      const tempo = q('.pm-tempo'); tempo.hidden = !(hay && P.mapa);
+      tempo.querySelectorAll('button').forEach((b) => b.classList.toggle('on', +b.dataset.t === P.tempo));
+      this.metaT = 0; this.ondaPos = -1; this.metaTxt = '';
     };
     this.pintarMusica = pintar;
     this.quitarOyente = P.alCambiar(pintar);
@@ -208,7 +243,8 @@ export class Panel {
       }
     }
     if (P.fuente !== 'archivo' || !c || !P.picos) return;
-    const p = P.pos(), meta = `${fmtT(p)} / ${fmtT(P.dur)}${P.bpm ? ` · ~${P.bpm} bpm` : ''}`;
+    const p = P.pos(), sec = this.senalRef && this.senalRef.A && this.senalRef.A.mapa ? this.senalRef.A.seccion : '';
+    const meta = `${fmtT(p)} / ${fmtT(P.dur)}${P.bpm ? ` · ${P.mapa ? '' : '~'}${P.bpm} bpm` : ''}${P.analizando != null ? ` · escuchando ${Math.round(P.analizando * 100)} %` : P.tono ? ' · ' + P.tono : ''}${sec ? ' · ' + sec : ''}`;
     if (meta !== this.metaTxt) { this.metaTxt = meta; this.el.querySelector('.pm-meta').textContent = meta; }
     const dpr = devicePixelRatio || 1, w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
     if (!w || !h) return;
@@ -218,6 +254,17 @@ export class Panel {
     this.ondaPos = x;
     const g = c.getContext('2d'), n = P.picos.length, acento = getComputedStyle(document.documentElement).getPropertyValue('--acento').trim() || '#ece6da';
     g.clearRect(0, 0, w, h);
+    // secciones del mapa: subida y drop se marcan debajo de la onda
+    const M = P.mapa;
+    if (M) {
+      for (const sc of M.secciones) {
+        if (sc.tipo === 'intro') continue;
+        g.fillStyle = sc.tipo === 'drop' ? 'rgba(214,69,50,.30)' : sc.tipo === 'subida' ? 'rgba(236,230,218,.12)' : 'rgba(0,0,0,.35)';
+        g.fillRect((sc.t0 / P.dur) * w, 0, ((sc.t1 - sc.t0) / P.dur) * w, h);
+      }
+      g.fillStyle = 'rgba(236,230,218,.9)';
+      for (const td of M.drops) g.fillRect((td / P.dur) * w, 0, Math.max(1, dpr), h * 0.22);
+    }
     const bw = w / n;
     for (let i = 0; i < n; i++) {
       const v = Math.max(0.04, P.picos[i]) * h * 0.46, xi = i * bw;

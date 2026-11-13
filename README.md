@@ -22,7 +22,11 @@ A gallery for heavy compute. You enter a lobby, pick a room, and each room is a 
 
 ## New in this version
 
-- **Bring your own music.** Drop an audio file anywhere on the page (or use the mic) and the *Señal* room listens and follows it: bass → hits, mids → twist, highs → sparks, plus tempo detection and drops. Tune sensitivity, smoothing and each band from the panel. Your song never leaves your machine — it is decoded and analysed in the browser.
+- **Bring your own music.** Drop an audio file anywhere on the page (or use the mic) and the *Señal* room listens and follows it: bass → hits, mids → twist, highs → sparks. Your song never leaves your machine — it is decoded and analysed in the browser.
+- **Señal hears the whole song first.** While it starts playing, the song is analysed offline (own code, no dependencies): beat grid with phase and downbeats, build-ups, the silence before each drop, the drops themselves, and the key bar by bar (chroma + Krumhansl profiles). Visuals then read that map at the exact moment you hear it, so hits land on the beat and a build-up knows how far the drop is. Tempo ×2 / ÷2 if it guesses double or half.
+- **Colour that follows the music.** Palettes rotate with the key (circle of fifths), on every drop, every bar, or as a slow rainbow. Scenes can change by themselves — on every drop, per section, or every 8/16 bars — melting into each other through the feedback loop.
+- **More visuals.** 13 patches (8 new: Túnel, Sol negro, Topografía, Espejo, Vórtice, Cristal, Ondas, Latido), new sources (rings, rays, checkerboard), tunnel/waves/bulge/mirror geometry, solarize and contour lines, plus compositing effects: radial zoom on hits, monitor scanlines, screen mirror, datamosh and a drop strobe (off when *flashes* are off).
+- **Record video.** `G` records what you see and hear (MP4 H.264 + AAC where the browser can, WebM otherwise). Pick a canvas format — screen, vertical 9:16 1080×1920 for Reels/TikTok, 16:9 1920×1080 or 1:1 — and *record the whole song* runs it from 0:00 to the end and downloads the file. Recording works in every room. A stage mode hides all text and goes fullscreen.
 - **A side panel that stays.** Controls, room actions, your music and view settings live in a collapsible panel (built on [lil-gui](https://lil-gui.georgealways.com)). Nothing fades away before you can read it: open it with `?`, close it with `×`, it remembers its state.
 - **Capture and share.** `O` saves a full-resolution PNG of the current frame, `V` goes fullscreen, and the panel copies a direct link to the room.
 - **Calmer palettes.** The *Bulbo* colour grades were rebalanced so the cyclic and two-tone palettes keep the shape readable instead of burning out.
@@ -66,7 +70,7 @@ Same scheme in every room. Keyboard, mouse or gamepad (Xbox/PlayStation, standar
 | Jump to room 1–10 | 1…9, 0 | — |
 | **Open / close the panel** | **?** | — |
 | Instruments (fps, GPU) · hide all text · sound | T · H · N | — |
-| Fullscreen · save PNG | V · O | — |
+| Fullscreen · save PNG · record video | V · O · G | — |
 | Auto-tour | P | — |
 | Load your own song | drag & drop an audio file | — |
 
@@ -84,7 +88,8 @@ On an Apple M5 MacBook at 1512×945 (~3.1–3.8 TFLOP/s) all twelve rooms run at
 
 - **WebGPU** compute + render, one class per room with hand-written WGSL (`js/demos/`): N-body, particles, fluid grids and LBM, raymarching, path tracing.
 - **WebGL2 fallback**: 7 simplified rooms (`js/gl/`).
-- **Generative audio** with Web Audio and no samples (`js/sonido.js`). Each room has a *score* that reads the simulation — a note on every Poincaré-section crossing in *Atractores*, the mode frequency in *Chladni*, wind that whistles with its speed. `js/pista.js` analyses your own songs (spectral flux, bands, BPM).
+- **Generative audio** with Web Audio and no samples (`js/sonido.js`). Each room has a *score* that reads the simulation — a note on every Poincaré-section crossing in *Atractores*, the mode frequency in *Chladni*, wind that whistles with its speed. `js/pista.js` follows your own songs live; `js/analisis.js` maps the whole song offline (FFT, spectral flux, Ellis-style dynamic-programming beat tracking, sections, key).
+- **Video capture** with `canvas.captureStream` + `MediaRecorder` (`js/grabar.js`), audio tapped from the final mix.
 - **No build step, no dependencies to install.** Plain ES modules; the only vendored library is lil-gui.
 
 ## Run it locally
@@ -125,10 +130,14 @@ Code: [MIT](LICENSE) © 2026 casiangel333 (HermannPR). Fonts keep their OFL lice
 
 - **Tu propia música.** Suelta un archivo de audio en cualquier parte de la página (o usa el micrófono) y la sala *Señal* lo escucha y lo sigue: graves → golpe, medios → torsión, agudos → chispas, con detección de tempo y de drops. Ajusta sensibilidad, suavizado y cada banda desde el panel. Tu canción no sale de tu equipo.
 - **Un panel lateral que no se va solo.** Controles, acciones de la sala, tu música y la vista viven en un panel plegable. Ábrelo con `?`, ciérralo con `×`; recuerda cómo lo dejaste.
+- **Señal escucha la canción completa.** Mientras empieza a sonar, la analiza entera: pulsos, tiempo fuerte, subidas, el silencio antes del drop, los drops y la tonalidad compás por compás. La imagen lee ese mapa en el instante que oyes. Si el tempo sale al doble o a la mitad, ×2 / ÷2.
+- **Color que sigue la música** (tonalidad en la rueda de quintas, cada drop, cada compás o arcoíris) y **escenas automáticas** (en cada drop, por sección o cada 8/16 compases).
+- **Más visuales:** 13 parches (8 nuevos), fuentes nuevas, túnel, ondas, esfera, espejo, solarizar, curvas de nivel, zoom radial, líneas de monitor, datamosh y estrobo.
+- **Graba video:** `G` graba lo que ves y oyes (MP4 o WebM). Formatos: pantalla, vertical 9:16 1080×1920, 16:9 o 1:1; «grabar la canción completa» va de 0:00 al final y descarga sola. Modo escenario: sin texto y en pantalla completa.
 - **Captura y comparte.** `O` guarda un PNG del cuadro, `V` pone pantalla completa y el panel copia el enlace directo a la sala.
 - **Paletas más sobrias** en *Bulbo* y **música nueva** en la antesala y en *Señal*.
 
-**Controles:** ← → sala, ↑ ↓ modo, Enter acción, Espacio pausa, Esc antesala, WASD/IJKL controles de la sala, Q/E intensidad, X paleta, C acción secundaria, `?` panel, T instrumentos, H ocultar texto, N sonido, V pantalla completa, O guardar PNG, P recorrido automático. Funciona con mando.
+**Controles:** ← → sala, ↑ ↓ modo, Enter acción, Espacio pausa, Esc antesala, WASD/IJKL controles de la sala, Q/E intensidad, X paleta, C acción secundaria, `?` panel, T instrumentos, H ocultar texto, N sonido, V pantalla completa, O guardar PNG, G grabar video, P recorrido automático. Funciona con mando.
 
 **Correrlo:** `npx serve .` o `python3 -m http.server 8000` y abre `localhost`.
 

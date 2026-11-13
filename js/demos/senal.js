@@ -6,13 +6,17 @@
 // que se oye. Encima, un osciloscopio con la onda real de la mezcla y chispas que estallan en el drop.
 // Calidad adaptativa: si el cuadro se pasa de presupuesto, baja la resolución interna (sin realojar:
 // se dibuja en una parte de la textura) y el número de chispas, con suavidad; el HUD muestra el nivel real.
+// Con tu canción, el color puede seguir la tonalidad (rueda de quintas) o girar en cada drop o compás, las
+// escenas cambian solas (en cada drop, por sección o cada 8/16 compases) fundiéndose por la retroalimentación,
+// y hay efectos de composición: líneas de barrido, zoom radial, espejo de pantalla, datamosh y estrobo.
 import { makeShader, U } from '../gpu.js';
 import { FS_VERT } from '../util.js';
 import { SENAL_ESTILOS } from '../sonido.js';
 
-const FUENTES = { osc: 0, noise: 1, voronoi: 2, shape: 3 };
-const GEO = { rotate: 1, scale: 2, kaleid: 3, scroll: 4, pixelate: 5, repeat: 6, modulate: 7, modulateRotate: 8, modulateScale: 9 };
-const COL = { posterize: 1, thresh: 2, contrast: 3, invert: 4, brillo: 5 };
+const FUENTES = { osc: 0, noise: 1, voronoi: 2, shape: 3, anillos: 4, rayos: 5, tablero: 6 };
+const GEO = { rotate: 1, scale: 2, kaleid: 3, scroll: 4, pixelate: 5, repeat: 6, modulate: 7, modulateRotate: 8, modulateScale: 9, espejo: 10, tunel: 11, ondas: 12, esfera: 13 };
+const COL = { posterize: 1, thresh: 2, contrast: 3, invert: 4, brillo: 5, solarizar: 6, bandas: 7 };
+const ENTEROS = new Set(['kaleid', 'posterize', 'shape', 'repeat', 'espejo', 'bandas', 'rayos', 'tablero']);
 const DUOS = [
   { nombre: 'Tinta y cobre', c: [[0.018, 0.016, 0.013], [0.5, 0.22, 0.09], [0.96, 0.89, 0.76]] },
   { nombre: 'Cianotipia', c: [[0.008, 0.02, 0.06], [0.07, 0.22, 0.52], [0.86, 0.92, 1.0]] },
@@ -33,7 +37,37 @@ const PARCHES = [
     col: [['contrast', 1.6], ['posterize', 8, 1]], fb: [0.93, 1.006, 0.008], croma: 0.06 },
   { nombre: 'Prisma', fuente: ['osc', 36, 0.12, 0.0], geo: [['rotate', 0.6, 0], ['kaleid', 3], ['modulate', 0.3, { src: 'voronoi', f: 4 }, 0.4], ['pixelate', 64]],
     col: [['contrast', 1.1]], fb: [0.7, 1.0, 0], croma: 0.12 },
+  { nombre: 'Túnel', fuente: ['tablero', 6, 0.0], geo: [['rotate', 0, 0.05], ['tunel', 0.45, 0.35], ['ondas', 0.02, 5, 1.5]],
+    col: [['contrast', 1.35]], fb: [0.62, 1.0, 0], croma: 0.04 },
+  { nombre: 'Sol negro', fuente: ['rayos', 12, 0.05, 0.6], geo: [['esfera', 0.6], ['kaleid', 6], ['modulateRotate', 0.5, { src: 'noise', f: 2 }, 0.4]],
+    col: [['contrast', 1.5], ['solarizar', 1.4]], fb: [0.82, 1.01, 0.006], croma: 0.05 },
+  { nombre: 'Topografía', fuente: ['noise', 1.8, 0.08], geo: [['modulate', 0.3, { src: 'noise', f: 1.2 }, 0.3], ['scale', 1.1]],
+    col: [['bandas', 9], ['contrast', 1.25]], fb: [0.55, 1.0, 0], croma: 0.03 },
+  { nombre: 'Espejo', fuente: ['voronoi', 5, 0.5, 0.6], geo: [['espejo', 2], ['ondas', 0.08, 6, 1.2], ['rotate', 0, 0.015]],
+    col: [['contrast', 1.3], ['posterize', 6, 1]], fb: [0.75, 1.004, 0.002], croma: 0.06 },
+  { nombre: 'Vórtice', fuente: ['osc', 14, 0.1, 0.6], geo: [['tunel', 0.3, 0.12], ['modulateRotate', 0.8, { src: 'osc', f: 2 }, 0.5], ['kaleid', 4]],
+    col: [['contrast', 1.2]], fb: [0.88, 0.99, 0.01], croma: 0.1 },
+  { nombre: 'Cristal', fuente: ['shape', 6, 0.3, 0.05], geo: [['kaleid', 6], ['esfera', -0.35], ['repeat', 3, 3], ['rotate', 0.2, 0.05]],
+    col: [['solarizar', 2], ['contrast', 1.4]], fb: [0.85, 1.015, -0.004], croma: 0.06 },
+  { nombre: 'Ondas', fuente: ['anillos', 6, 0.4, 2], geo: [['ondas', 0.12, 4, 0.8], ['modulate', 0.15, { src: 'noise', f: 3 }, 0.5]],
+    col: [['contrast', 1.5]], fb: [0.8, 1.008, 0], croma: 0.08 },
+  { nombre: 'Latido', fuente: ['anillos', 10, 1.0, 4], geo: [['esfera', 0.8], ['pixelate', 90]],
+    col: [['thresh', 0.5, 0.06]], fb: [0.9, 1.02, 0], croma: 0.0 },
 ];
+// opciones del panel
+const COLOR = ['fijas', 'tonalidad', 'cada drop', 'cada compás', 'arcoíris'];
+const ESCENAS = ['manual', 'en cada drop', 'por sección', 'cada 8 compases', 'cada 16 compases'];
+const ESPEJO = ['no', 'horizontal', 'cuatro'];
+const FX_BASE = { color: 'tonalidad', escenas: 'manual', osciloscopio: true, barrido: 0, zoom: 0.5, espejo: 'no', mosh: 0, estrobo: false };
+const CLAVE_FX = 'umbral.senal';
+const TAU = Math.PI * 2;
+// gira el matiz conservando la luminancia (rotación en el plano I-Q de YIQ)
+function girar(c, a) {
+  if (!a) return c;
+  const y = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2], i = 0.596 * c[0] - 0.274 * c[1] - 0.322 * c[2], q = 0.211 * c[0] - 0.523 * c[1] + 0.312 * c[2];
+  const ca = Math.cos(a), sa = Math.sin(a), i2 = i * ca - q * sa, q2 = i * sa + q * ca;
+  return [Math.max(0, y + 0.956 * i2 + 0.621 * q2), Math.max(0, y - 0.272 * i2 - 0.647 * q2), Math.max(0, y - 1.106 * i2 + 1.703 * q2)];
+}
 // cómo se ve cada estilo: su parche, sus tintas y cuánto golpea cada efecto
 const VISTA = [
   { parche: 2, duo: 2, golpe: 1.0, glitch: 1.0, croma: 1.0, destello: 1.0, chispas: 1.0, tor: 1.0, inv: true },   // brostep 2010
@@ -54,6 +88,7 @@ struct Uni {
   d0: vec4f, d1: vec4f, d2: vec4f,
   ex: vec4f,   // golpe del bombo, torsión del bajo, subida, drop
   vp: vec4f,   // fracción del cuadro anterior (x, y), sacudida (x, y)
+  fx: vec4f,   // datamosh, _, _, _
   geo: array<Op, 6>,
   col: array<vec4f, 6>,
 };
@@ -94,11 +129,25 @@ fn fuente(id: f32, p: vec2f, a: f32, b: f32, c: f32) -> vec3f {
     let v = mix(d1, d2 - d1, c);
     return vec3f(v, v * 0.9, v * 0.8);
   }
-  // shape: polígono regular de a lados, radio b, suavizado c
-  let ang = atan2(p.x, p.y) + 3.14159265;
-  let r = TAU / max(3.0, a);
-  let d = cos(floor(0.5 + ang / r) * r - ang) * length(p);
-  return vec3f(1.0 - smoothstep(b, b + c + 0.001, d));
+  if (id < 3.5) {            // shape: polígono regular de a lados, radio b, suavizado c
+    let ang = atan2(p.x, p.y) + 3.14159265;
+    let r = TAU / max(3.0, a);
+    let d = cos(floor(0.5 + ang / r) * r - ang) * length(p);
+    return vec3f(1.0 - smoothstep(b, b + c + 0.001, d));
+  }
+  if (id < 4.5) {            // anillos: frecuencia a, velocidad b, filo c
+    let v = 0.5 + 0.5 * sin((length(p) * a - t * b) * TAU);
+    let w = pow(v, max(0.2, c));
+    return vec3f(w, w * 0.92 + 0.04, w * 0.85 + 0.08);
+  }
+  if (id < 5.5) {            // rayos: a rayos, velocidad b, espiral c
+    let v = 0.5 + 0.5 * sin(atan2(p.y, p.x) * floor(max(1.0, a)) + length(p) * c * TAU - t * b * TAU);
+    return vec3f(v, v * v, sqrt(v));
+  }
+  // tablero: a casillas, desplazamiento b
+  let q = floor(p * a + vec2f(t * b, 0.0));
+  let v = abs(q.x + q.y) % 2.0;
+  return vec3f(v);
 }
 fn lum(c: vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }
 
@@ -126,11 +175,24 @@ fn lum(c: vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }
     else if (id < 4.5) { p += vec2f(p1 + t * o.a.w, o.a.z + t * o.b.x); }
     else if (id < 5.5) { p = floor(p * p1) / p1; }
     else if (id < 6.5) { p = fract(p * vec2f(p1, o.a.z) + 0.5) - 0.5; }
-    else {
+    else if (id < 9.5) {
       let m = fuente(o.b.y, p, o.b.z, 0.1, 0.5);
       if (id < 7.5) { p += (m.xy - 0.5) * p1; }
       else if (id < 8.5) { p = rot((m.x - 0.5) * p1) * p; }
       else { p *= 1.0 + (m.x - 0.5) * p1; }
+    }
+    else if (id < 10.5) { if (p1 < 1.5) { p.x = abs(p.x); } else { p = abs(p); } }
+    else if (id < 11.5) {      // túnel: coordenadas polares, profundidad p1, avance p2 (la subida acelera)
+      let r = length(p);
+      p = vec2f(atan2(p.y, p.x) / 3.14159265, p1 / (r + 0.03) + t * (o.a.z + sub * 0.8));
+    }
+    else if (id < 12.5) {      // ondas: amplitud p1 (los medios la doblan), frecuencia p2, velocidad p3
+      let amp = p1 * (1.0 + tor * 3.0);
+      p += amp * vec2f(sin(p.y * o.a.z + t * o.a.w), sin(p.x * o.a.z * 1.13 - t * o.a.w));
+    }
+    else {                     // esfera: abombado (p1 > 0) o pellizco (p1 < 0); el bombo lo infla
+      let r2 = dot(p, p);
+      p = p * (1.0 + (p1 + golpe * 0.5) * r2) / (1.0 + max(0.0, p1) * 0.25);
     }
   }
   var c = fuente(u.s.x, p, u.s.y, u.s.z, u.s.w);
@@ -140,7 +202,12 @@ fn lum(c: vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }
     else if (o.x < 2.5) { c = vec3f(smoothstep(o.y - o.z, o.y + o.z, lum(c))); }
     else if (o.x < 3.5) { c = (c - 0.5) * o.y + 0.5; }
     else if (o.x < 4.5) { c = mix(c, 1.0 - c, o.y); }
-    else { c += o.y; }
+    else if (o.x < 5.5) { c += o.y; }
+    else if (o.x < 6.5) { c = 0.5 - 0.5 * cos(c * TAU * o.y * 0.5); }
+    else {                     // bandas: curvas de nivel de la luminancia
+      let b = abs(fract(lum(c) * o.y) * 2.0 - 1.0);
+      c = vec3f(lum(c) * 0.35 + 0.65 * smoothstep(0.78, 0.97, b));
+    }
   }
   c = clamp(c, vec3f(0.0), vec3f(1.0));
   // dirección de arte: tres tintas según la luminancia, con un hilo de color original
@@ -153,9 +220,15 @@ fn lum(c: vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }
   let zoom = u.s2.w + sub * 0.035 + golpe * 0.02;
   var qf = rot(u.fb.x + drop * 0.04) * qa / zoom;
   qf = vec2f(qf.x * res.y / res.x, qf.y) + 0.5;
+  // datamosh: el cuadro anterior se arrastra por bloques con vectores al azar que cambian a saltos
+  let mosh = u.fx.x;
+  if (mosh > 0.001) {
+    let bq = floor(qa * 9.0 + 37.0);
+    qf += (h22(bq + floor(t * 7.0)) - 0.5) * mosh * 0.05 * step(0.35, h2(bq * 1.7 + floor(t * 3.0)));
+  }
   let uvp = clamp(espejo(qf), vec2f(0.002), vec2f(0.998)) * u.vp.xy;
   let prev = textureSampleLevel(previo, smp, uvp, 0.0).rgb;
-  return vec4f(max(duo, prev * u.s2.z), 1.0);
+  return vec4f(max(duo, prev * max(u.s2.z, mosh * 0.9)), 1.0);
 }
 `;
 
@@ -167,6 +240,7 @@ struct CU {
   c: vec4f,  // destello, inversión, croma, cortes
   d: vec4f,  // tinta clara rgb, amplitud del osciloscopio
   e: vec4f,  // bombeo, apagón (hueco antes del drop), grosor de línea (px), _
+  f: vec4f,  // barrido (líneas), zoom radial, espejo (0 no, 1 horizontal, 2 cuatro), _
   onda: array<vec4f, 64>,
 };
 @group(0) @binding(0) var<uniform> cu: CU;
@@ -186,19 +260,38 @@ fn ondaEn(x: f32) -> f32 {
     let banda = floor(uv.y * 18.0 + fr * 3.0);
     if (h1(banda + fr * 7.0) < g * 0.55) { uv.x += (h1(banda * 3.7 + fr) - 0.5) * g * 0.16; }
   }
+  // espejo de pantalla: la mitad izquierda (o el cuarto superior izquierdo) se refleja
+  if (cu.f.z > 0.5) { uv.x = 0.5 - abs(uv.x - 0.5); if (cu.f.z > 1.5) { uv.y = 0.5 - abs(uv.y - 0.5); } }
   uv = (uv - 0.5) * (1.0 - cu.b.y * 0.03 - cu.b.w * 0.07) + 0.5;
   let fr2 = cu.a.zw; let dir = uv - 0.5; let cr = cu.c.z;
   let lo = vec2f(0.001); let hi = vec2f(0.999);
   let r = textureSampleLevel(src, smp, clamp(uv + dir * cr, lo, hi) * fr2, 0.0).r;
   let gg = textureSampleLevel(src, smp, clamp(uv, lo, hi) * fr2, 0.0).g;
   let b = textureSampleLevel(src, smp, clamp(uv - dir * cr, lo, hi) * fr2, 0.0).b;
-  var c = vec3f(r, gg, b) * cu.e.x * (1.0 - cu.e.y * 0.88);
+  var c = vec3f(r, gg, b);
+  // zoom radial: estela hacia el centro en los golpes y el drop
+  let zb = cu.f.y;
+  if (zb > 0.002) {
+    for (var k = 1; k <= 6; k++) {
+      let uk = dir * (1.0 - zb * f32(k) / 6.0) + 0.5;
+      c += textureSampleLevel(src, smp, clamp(uk, lo, hi) * fr2, 0.0).rgb;
+    }
+    c /= 7.0;
+  }
+  c *= cu.e.x * (1.0 - cu.e.y * 0.88);
   // osciloscopio: la onda real de la mezcla cruzando la lámina
   let amp = cu.d.w;
   if (amp > 0.0005) {
     let y = 0.5 + ondaEn(i.pos.x / res.x) * amp;
     let dpx = abs(i.pos.y / res.y - y) * res.y;
     c += cu.d.rgb * exp(-dpx * dpx / (cu.e.z * cu.e.z)) * (0.7 + cu.e.y);
+  }
+  // barrido: líneas de monitor y una franja que sube despacio
+  let sl = cu.f.x;
+  if (sl > 0.001) {
+    let y = i.pos.y * (1000.0 / res.y);
+    c *= 1.0 - sl * (0.3 * (0.5 + 0.5 * sin(y * 2.0944)) + 0.14 * smoothstep(0.9, 1.0, fract(uv.y * 0.6 - t * 0.11)));
+    c += sl * 0.03 * h1(floor(i.pos.y) + floor(t * 60.0) * 0.37);
   }
   c = mix(c, vec3f(1.0) - c, cu.c.y);
   c = mix(c, vec3f(1.6, 1.52, 1.4), cu.c.x);
@@ -275,7 +368,7 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1
 
 const fmtN = (v) => (Math.abs(v) >= 10 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2)).replace(/\.0+$/, '');
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const U_GEN = 144 + 6 * 32 + 6 * 16, U_COMP = 80 + 64 * 16;
+const U_GEN = 160 + 6 * 32 + 6 * 16, U_COMP = 96 + 64 * 16;
 
 export default class Senal {
   static palettes = DUOS.map((d) => d.nombre);
@@ -313,6 +406,10 @@ export default class Senal {
     this.onda = new Float32Array(256); this.tdom = new Float32Array(1024);
     this.vivoTxt = ''; this.calTxt = ''; this.calT = 0;
     this.estiloI = 0; this.i = 0;
+    // color y escenas: matiz actual y objetivo (radianes), compases contados y transición entre parches
+    this.fx = { ...FX_BASE };
+    try { Object.assign(this.fx, JSON.parse(localStorage.getItem(CLAVE_FX) || '{}')); } catch {}
+    this.hue = 0; this.hueObj = 0; this.ultCompas = null; this.nCompases = 0; this.ultSec = ''; this.dropVisto = -1; this.trans = 0;
     this.ponerEstilo(0);
     // «tu música»: si hay una canción propia (o el micrófono), la sala la escucha a ella en vez de la máquina
     this.pista = this.ctx.sonido && this.ctx.sonido.pista;
@@ -341,7 +438,23 @@ export default class Senal {
   }
   get conPista() { return !!(this.pista && this.pista.activa); }
   // lo que el panel puede elegir: carácter (cómo golpea), parche y tintas
-  opciones() { return { looks: SENAL_ESTILOS.map((e) => e.nombre), look: this.estiloI, parches: PARCHES.map((p) => p.nombre), parche: this.i, tintas: DUOS.map((d) => d.nombre), tinta: this.palette }; }
+  opciones() {
+    return { looks: SENAL_ESTILOS.map((e) => e.nombre), look: this.estiloI, parches: PARCHES.map((p) => p.nombre), parche: this.i, tintas: DUOS.map((d) => d.nombre), tinta: this.palette,
+      colores: COLOR, escenas: ESCENAS, espejos: ESPEJO, fx: this.fx };
+  }
+  // efectos y modos (los guarda para la próxima vez)
+  efecto(k, v) {
+    this.fx[k] = v;
+    try { localStorage.setItem(CLAVE_FX, JSON.stringify(this.fx)); } catch {}
+    if (k === 'color' && v === 'fijas') this.hueObj = Math.round(this.hue / TAU) * TAU;
+    this.codigo();
+  }
+  // cambio de escena: otro parche al azar; la retroalimentación funde el viejo con el nuevo
+  cambiarEscena() {
+    let j = this.i;
+    while (j === this.i) j = Math.floor(Math.random() * PARCHES.length);
+    this.cargar(j); this.trans = 1; this.codigo();
+  }
   fijar(k, i) {
     if (i < 0) return;
     if (k === 'look') { const pal = this.palette, par = this.i; this.ponerEstilo(i); if (this.conPista) { this.cargar(par); this.palette = this.palPrev = pal; } }
@@ -370,13 +483,20 @@ export default class Senal {
   codigo() {
     const L = this.lineas(), E = SENAL_ESTILOS[this.estiloI], Pi = this.conPista ? this.pista : null;
     this.nLineas = L.length;
-    const cab = Pi ? `escuchar('${(Pi.nombre || '').replace(/'/g, '’').slice(0, 34)}'${Pi.bpm ? ', ~' + Pi.bpm : ''})` : `musica('${E.nombre}', ${E.bpm})`;
+    const tono = Pi && Pi.tono ? `, '${Pi.tono}'` : '';
+    const cab = Pi ? `escuchar('${(Pi.nombre || '').replace(/'/g, '’').slice(0, 34)}'${Pi.bpm ? ', ~' + Pi.bpm : ''}${tono})` : `musica('${E.nombre}', ${E.bpm})`;
+    const F = this.fx, extra = [];
+    if (F.color !== 'fijas') extra.push(`.color('${F.color}')`);
+    if (F.escenas !== 'manual') extra.push(`.escenas('${F.escenas}')`);
+    const fxs = [F.barrido > 0 && `barrido(${fmtN(F.barrido)})`, F.zoom > 0 && `zoom(${fmtN(F.zoom)})`, F.espejo !== 'no' && `espejo('${F.espejo}')`, F.mosh > 0 && `mosh(${fmtN(F.mosh)})`, F.estrobo && 'estrobo()'].filter(Boolean);
+    if (fxs.length) extra.push('.' + fxs.join('.'));
     this.ctx.capa.innerHTML = `<div style="position:absolute;left:44px;top:38px;font:400 13px/1.75 var(--mono);color:var(--papel-2);
       padding:14px 18px 14px 16px;background:rgba(12,11,9,.72);border-left:1px solid var(--acento)">
       <div class="rotulo-t" style="margin-bottom:6px">estilo ${this.estiloI + 1} / ${SENAL_ESTILOS.length} · parche ${this.i + 1} / ${PARCHES.length} · ${this.P.nombre}</div>
       <div style="white-space:pre;color:var(--papel)"><span style="display:inline-block;width:14px"></span>${cab}</div>
       <div id="senal-vivo" style="white-space:pre;color:var(--acento);margin-bottom:4px"><span style="display:inline-block;width:14px"></span>  ${this.vivoTxt}</div>
       ${L.map((l, k) => `<div style="white-space:pre;${k === this.linea ? 'color:var(--papel)' : ''}"><span style="display:inline-block;width:14px;color:var(--acento)">${k === this.linea ? '›' : ''}</span>${k ? '  ' : ''}${l.txt}</div>`).join('')}
+      ${extra.map((x) => `<div style="white-space:pre;color:var(--papel-3)"><span style="display:inline-block;width:14px"></span>  ${x}</div>`).join('')}
       <div class="rotulo" style="margin-top:10px;color:var(--papel-3)">${Pi ? 'carácter · ' + E.nombre + ' · ↑ ↓ lo cambian' : 'suelta aquí tu canción · o ábrela en el panel (?)'}</div>
       <div class="rotulo" style="margin-top:2px;color:var(--papel-3)">inspirado en Hydra (hydra.ojack.xyz) · implementación propia</div></div>`;
     this.vivoEl = document.getElementById('senal-vivo');
@@ -386,7 +506,7 @@ export default class Senal {
     if (!l || !l.ref) { this.palette = (this.palette + dir + DUOS.length) % DUOS.length; this.palPrev = this.palette; this.codigo(); return; }
     const r = l.ref, k = l.idx, v = r[k];
     if (r === this.P.fb) r[0] = Math.min(0.97, Math.max(0, v + dir * 0.03));
-    else if (r[0] === 'kaleid' || r[0] === 'posterize' || r[0] === 'shape' || r[0] === 'repeat') r[k] = Math.max(1, v + dir);
+    else if (ENTEROS.has(r[0])) r[k] = Math.max(1, v + dir);
     else r[k] = v * (dir > 0 ? 1.12 : 1 / 1.12);
     this.codigo();
   }
@@ -471,37 +591,64 @@ export default class Senal {
     const n = this.nAct = Math.max(256, Math.round((this.nMax * this.fPart) / 256) * 256);
     c2 = Math.min(c2, n >> 1); c1 = Math.min(c1, n >> 3); c0 = Math.min(c0, n >> 3);
 
+    // ---- escenas y color que siguen la música ----
+    const F = this.fx, nuevoDrop = A.tDrop > -90 && tv >= A.tDrop && A.tDrop !== this.dropVisto;
+    if (nuevoDrop) this.dropVisto = A.tDrop;
+    const nuevoCompas = this.ultCompas !== null && A.compas !== this.ultCompas;
+    this.ultCompas = A.compas;
+    if (nuevoCompas) this.nCompases++;
+    const nuevaSec = A.seccion && A.seccion !== this.ultSec && this.ultSec !== '';
+    this.ultSec = A.seccion || this.ultSec;
+    if (A.real && this.edad > 1.5) {
+      const E = F.escenas;
+      if ((E === 'en cada drop' && nuevoDrop) || (E === 'por sección' && nuevaSec) || (E === 'cada 8 compases' && nuevoCompas && this.nCompases % 8 === 0) || (E === 'cada 16 compases' && nuevoCompas && this.nCompases % 16 === 0)) this.cambiarEscena();
+    }
+    const M = F.color;
+    let rapidez = 2.5;
+    if (M === 'tonalidad' && A.tono != null && A.tono >= 0) { const o = (A.tono * TAU) / 12; this.hueObj = this.hue + (((o - this.hue) % TAU) + TAU * 1.5) % TAU - TAU / 2; rapidez = 1.6; }
+    else if (M === 'cada drop') { if (nuevoDrop) this.hueObj += 2.4; rapidez = 7; }
+    else if (M === 'cada compás' || (M === 'tonalidad' && nuevoCompas && this.nCompases % 4 === 0)) { if (nuevoCompas) this.hueObj += M === 'tonalidad' ? TAU / 4 : TAU / 12; rapidez = 4; }
+    else if (M === 'arcoíris') this.hueObj += dt * (0.22 + kick * 0.9 * R);
+    this.hue += (this.hueObj - this.hue) * Math.min(1, dt * rapidez);
+    if (Math.abs(this.hue) > TAU * 64) { const k = Math.round(this.hue / TAU) * TAU; this.hue -= k; this.hueObj -= k; }
+    this.trans = Math.max(0, this.trans - dt * 1.3);
+    const permite = !aj || aj.destellos;
+
     // ---- generador a resolución interna ----
     const esc = this.esc, iw = Math.max(32, Math.round(W * esc)), ih = Math.max(32, Math.round(H * esc));
     const P = this.P, f = this.fu;
     const sh = (sub * sub * 0.012 + dropG * 0.03 + kick * 0.005 * V.golpe) * R;
     f.set([iw, ih, t, P.geo.length], 0);
     f.set([FUENTES[P.fuente[0]], P.fuente[1], P.fuente[2] || 0, P.fuente[3] || 0], 4);
-    f.set([P.col.length, P.croma, Math.min(0.93, P.fb[0] + drop * 0.03), P.fb[1] + kick * 0.004 * R], 8);
+    const tr = this.trans * this.trans * (3 - 2 * this.trans);
+    f.set([P.col.length, P.croma, Math.min(0.96, Math.max(P.fb[0] + drop * 0.03, 0.95 * tr)), P.fb[1] + kick * 0.004 * R + tr * 0.025], 8);
     f.set([P.fb[2], kick * R, wob, 0], 12);
-    const D = DUOS[this.palette].c;
+    const D = DUOS[this.palette].c.map((c) => girar(c, this.hue));
     f.set([...D[0], 0], 16); f.set([...D[1], 0], 20); f.set([...D[2], 0], 24);
     f.set([kick * V.golpe * R, wob * V.tor * R * (0.4 + enDrop * 0.6), sub * R, dropG * V.golpe * R], 28);
     f.set([this.fracPrev[0], this.fracPrev[1], (Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh], 32);
     f.fill(0, 36);
+    f[36] = clamp(F.mosh * (0.35 + 0.65 * Math.max(caja, dropG)) * (0.5 + 0.5 * R), 0, 1);
     P.geo.forEach((g, k) => {
-      const o = 36 + k * 8, mod = g.find((x) => x && typeof x === 'object');
+      const o = 40 + k * 8, mod = g.find((x) => x && typeof x === 'object');
       const nums = g.slice(1).filter((x) => typeof x === 'number');
       if (mod) f.set([GEO[g[0]], nums[0], 0, 0, 0, FUENTES[mod.src], mod.f, nums[1] || 0], o);
       else f.set([GEO[g[0]], nums[0] ?? 0, nums[1] ?? 0, nums[2] ?? 0, nums[3] ?? 0, 0, 0, 0], o);
     });
-    P.col.forEach((c, k) => f.set([COL[c[0]], c[1] ?? 0, c[2] ?? 1, 0], 84 + k * 4));
+    P.col.forEach((c, k) => f.set([COL[c[0]], c[1] ?? 0, c[2] ?? 1, 0], 88 + k * 4));
     d.queue.writeBuffer(this.u, 0, f);
 
     // ---- composición ----
     const amp = this.leerOnda();
     const fc = this.fc, frac = [iw / W, ih / H];
+    const estrobo = F.estrobo && permite ? kick * (0.25 + enDrop * 0.45) * R : 0;
     fc.set([W, H, frac[0], frac[1]], 0);
     fc.set([t, kick * V.golpe * R, caja, dropG * R], 4);
-    fc.set([clamp((dropG * dropG * 0.9 + caja * sub * 0.2) * V.destello * R, 0, 1), inv, (0.0015 + kick * 0.007 + dropG * 0.02 + wob * enDrop * 0.004) * V.croma * R, clamp((caja * 0.8 + dropG) * V.glitch * R, 0, 1.5)], 8);
-    fc.set([...D[2], (0.05 + 0.1 * enDrop + 0.04 * sub) / Math.max(0.25, amp) * 0.5], 12);
+    fc.set([clamp(Math.max((dropG * dropG * 0.9 + caja * sub * 0.2) * V.destello * R, estrobo), 0, 1), inv, (0.0015 + kick * 0.007 + dropG * 0.02 + wob * enDrop * 0.004) * V.croma * R, clamp((caja * 0.8 + dropG) * V.glitch * R, 0, 1.5)], 8);
+    fc.set([...D[2], F.osciloscopio ? (0.05 + 0.1 * enDrop + 0.04 * sub) / Math.max(0.25, amp) * 0.5 : 0], 12);
     fc.set([1 + kick * 0.22 * V.golpe * R, hueco, (1.1 + dropG * 3 + kick) * (H / 1000), 0], 16);
-    fc.set(this.onda, 20);
+    fc.set([F.barrido, clamp(F.zoom * (kick * 0.12 * V.golpe + dropG * 0.3 + sub * sub * 0.08) * R, 0, 0.5), ESPEJO.indexOf(F.espejo), 0], 20);
+    fc.set(this.onda, 24);
     d.queue.writeBuffer(this.uc, 0, fc);
 
     // ---- chispas ----
@@ -534,7 +681,8 @@ export default class Senal {
     if (A.pista) {
       const Pi = this.pista, b = A.bandas || [0, 0, 0], bar = (v) => '▁▂▃▄▅▆▇█'[Math.max(0, Math.min(7, Math.round(v * 7)))];
       const t = Pi.fuente === 'archivo' ? `${Math.floor(Pi.pos() / 60)}:${String(Math.floor(Pi.pos() % 60)).padStart(2, '0')}` : 'en vivo';
-      txt = `.${SEC_NOMBRE[A.seccion] || A.seccion}  ${bar(b[0])}${bar(b[1])}${bar(b[2])}  ${Pi.fuente === 'archivo' && !Pi.sonando ? 'en pausa · ' : ''}${t}`;
+      const extra = Pi.analizando != null ? ` · escuchando la canción ${Math.round(Pi.analizando * 100)} %` : Pi.tono ? ' · ' + Pi.tono : '';
+      txt = `.${SEC_NOMBRE[A.seccion] || A.seccion}  ${bar(b[0])}${bar(b[1])}${bar(b[2])}  ${Pi.fuente === 'archivo' && !Pi.sonando ? 'en pausa · ' : ''}${t}${extra}`;
     } else if (A.real && A.seccion) {
       const cel = 16, llenas = Math.round(A.prog * cel);
       txt = `.${SEC_NOMBRE[A.seccion] || A.seccion}  ${'▮'.repeat(llenas)}${'▯'.repeat(cel - llenas)}  ${A.compas + 1} / ${A.compases}`;

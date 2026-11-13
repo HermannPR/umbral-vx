@@ -325,3 +325,17 @@ body.sin-gpu #hud, body.sin-gpu #antesala, body.sin-gpu #portada, body.sin-gpu #
 #sg-laminas figcaption { font: 400 11px/1.4 var(--mono, monospace); letter-spacing: .06em; margin-top: 6px; opacity: .8; }
 #sg-laminas b { color: #C8323C; font-weight: 400; margin-right: 6px; }
 #sin-gpu .sg-motivo { font: 400 11px/1.4 var(--mono, monospace); opacity: .45; }
+
+/* formato fijo para video: el lienzo encaja en la ventana con bandas negras */
+body.formato-fijo { background: #000; }
+body.formato-fijo canvas#c { object-fit: contain; background: #000; }
+body.sin-texto #capa { visibility: hidden; }
+/* grabando: un rótulo discreto (no sale en el video: el video es solo el lienzo) */
+#rec { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 60; display: none; font: 500 12px/1 var(--mono); letter-spacing: .08em;
+  color: #ece6da; background: rgba(12, 11, 9, .78); border: 1px solid rgba(214, 69, 50, .7); padding: 8px 12px; pointer-events: none; }
+body.grabando #rec { display: block; }
+body.grabando #rec::first-letter { color: #e0533e; }
+.pm-tempo { align-items: center; }
+.pm-tempo .pm-tt { font: 400 11px/1 var(--mono); color: var(--papel-3); margin-right: 4px; letter-spacing: .06em; }
+.pm .pm-tempo button.on { border-color: var(--acento); color: var(--papel); }
+.pm [hidden] { display: none !important; }

@@ -32,6 +32,7 @@ export class Sonido {
     const comp = ac.createDynamicsCompressor();
     comp.threshold.value = -18; comp.knee.value = 12; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.4;
     this.master.connect(comp).connect(ac.destination);
+    this.salida = comp;            // la mezcla final: de aquí graba el video
     // reverberación: respuesta al impulso sintética (ruido estéreo con caída exponencial)
     this.rev = ac.createConvolver();
     const len = Math.floor(ac.sampleRate * 3.4), ir = ac.createBuffer(2, len, ac.sampleRate);

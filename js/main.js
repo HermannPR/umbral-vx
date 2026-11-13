@@ -10,6 +10,7 @@ import { Sonido } from './sonido.js';
 import { Antesala } from './antesala.js';
 import { Pista } from './pista.js';
 import { Panel } from './panel.js';
+import { Grabadora, puedeGrabar } from './grabar.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c');
@@ -62,7 +63,11 @@ function nivelPara(i) {
 }
 document.title = MARCA.nombre;
 
+// formato fijo (para grabar video): el lienzo tiene ese tamaño exacto y se ve encajado en la ventana
+const FORMATOS = { pantalla: null, 'vertical 9:16 · 1080×1920': [1080, 1920], 'horizontal 16:9 · 1920×1080': [1920, 1080], 'cuadrado 1:1 · 1080×1080': [1080, 1080] };
+let formato = null, formatoNombre = 'pantalla';
 function canvasSize(escala = !ctx ? 1 : ctx.api === 'webgl2' ? ctx.escalaGL : ctx.calidad ? ctx.calidad.escala : 1) {
+  if (formato) return formato.slice();
   const dpr = (window.devicePixelRatio || 1) * escala;
   return [Math.max(64, Math.round(innerWidth * dpr)), Math.max(64, Math.round(innerHeight * dpr))];
 }
@@ -465,6 +470,69 @@ function guardarPNG() {
     aviso('Imagen guardada · ' + nombre);
   }, 'image/png');
 }
+// formato del lienzo: pantalla o uno fijo para video (la sala se rehace a ese tamaño)
+function fijarFormato(nombre) {
+  if (!(nombre in FORMATOS) || grabadora.activa) return;
+  formatoNombre = nombre; formato = FORMATOS[nombre];
+  document.body.classList.toggle('formato-fijo', !!formato);
+  clearTimeout(resizeT); redimensionar();
+  sincronizarPanel();
+}
+// grabar: lo que se ve y lo que suena, en tiempo real (G empieza y detiene)
+const grabadora = new Grabadora();
+let grabandoCancion = false, recT = 0;
+function marcarRec() {
+  const on = grabadora.activa;
+  document.body.classList.toggle('grabando', on);
+  let el = $('rec');
+  if (!el) { el = document.createElement('div'); el.id = 'rec'; el.setAttribute('aria-live', 'polite'); document.body.append(el); }
+  clearInterval(recT);
+  const pinta = () => { const s = Math.floor(grabadora.segundos); el.textContent = `● grabando ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}${grabandoCancion && pista.dur ? ' / ' + Math.floor(pista.dur / 60) + ':' + String(Math.floor(pista.dur % 60)).padStart(2, '0') : ''} · G detiene`; };
+  if (on) { pinta(); recT = setInterval(pinta, 500); }
+  if (panel && panel.grabacion) panel.grabacion(on);
+}
+function grabar() {
+  if (grabadora.activa) { grabadora.detener(); return; }
+  if (modo !== 'sala' || !current) { aviso('Entra a una sala para grabar'); return; }
+  if (!puedeGrabar()) { aviso('Este navegador no puede grabar video'); return; }
+  sonido.iniciar(true);
+  if (sonido.mudo) { sonido.alternarMudo(); sincronizarPanel(); }
+  const nodos = [];
+  if (sonido.salida) nodos.push(sonido.salida);
+  if (pista.fuente === 'mic' && pista.mic) nodos.push(pista.mic);
+  const S = SALAS[idx], d = new Date(), dd = (n) => String(n).padStart(2, '0');
+  const nombre = `umbral-${S.slug}${S.slug === 'senal' && pista.activa && pista.fuente === 'archivo' ? '-' + pista.nombre : ''}-${d.getFullYear()}${dd(d.getMonth() + 1)}${dd(d.getDate())}-${dd(d.getHours())}${dd(d.getMinutes())}${dd(d.getSeconds())}`;
+  try {
+    grabadora.iniciar({ canvas, ac: sonido.ac, nodos, fps: Math.min(60, FPS_MAX), nombre, alTerminar: (r) => {
+      grabandoCancion = false; pista.sinBucle = false; marcarRec();
+      aviso(`Video guardado · ${r.archivo} · ${(r.bytes / 1e6).toFixed(1)} MB`);
+      log({ type: 'video', ext: r.ext, dur: +r.dur.toFixed(1), mb: +(r.bytes / 1e6).toFixed(1), W: canvas.width, H: canvas.height });
+    } });
+  } catch (e) { aviso((e && e.message) || 'No pude grabar'); return; }
+  marcarRec();
+  if (!grabandoCancion) aviso('Grabando · G para detener');
+}
+// la canción completa: de 0:00 al final, sin repetir; el video se descarga solo al terminar
+async function grabarCancion() {
+  if (grabadora.activa) { grabadora.detener(); return; }
+  if (pista.fuente !== 'archivo') { aviso('Primero suelta una canción'); return; }
+  if (!(modo === 'sala' && idx === iSenal)) await entrar(iSenal);
+  for (let k = 0; (ocupado || (formato && (canvas.width !== formato[0] || canvas.height !== formato[1]))) && k < 100; k++) await espera(100);
+  pista.sinBucle = true; pista.pausar(); pista.buscar(0);
+  grabandoCancion = true;
+  grabar();
+  if (!grabadora.activa) { grabandoCancion = false; pista.sinBucle = false; return; }
+  aviso('Grabando la canción completa · G detiene');
+  setTimeout(() => { if (grabadora.activa) pista.reproducir(0); }, 350);
+}
+pista.alTerminar = () => { if (grabandoCancion && grabadora.activa) setTimeout(() => grabadora.detener(), 800); };
+// escenario: pantalla completa, sin panel ni texto (H lo devuelve)
+function escenario() {
+  if (panel) panel.cerrar();
+  if (!$('hud').classList.contains('oculto')) alternarTexto();
+  const d = document;
+  if (!(d.fullscreenElement || d.webkitFullscreenElement)) pantallaCompleta();
+}
 function copiarEnlace() {
   const url = location.origin + location.pathname + (idx >= 0 && modo === 'sala' ? '?sala=' + (idx + 1) : '');
   const ok = () => aviso('Enlace copiado'), no = () => aviso(url);
@@ -503,7 +571,9 @@ function accPanel() {
   return {
     alCambiar: () => { dibujarDatos(); antesala && antesala.actualizar(estado()); },
     pulsar: (b) => { input.inject = b; },
-    pantallaCompleta, captura, copiarEnlace,
+    pantallaCompleta, captura, copiarEnlace, escenario,
+    formatos: Object.keys(FORMATOS), formato: (x) => fijarFormato(x),
+    grabar, grabarCancion, grabando: () => grabadora.activa, puedeGrabar: puedeGrabar(),
     ocultarTodo: alternarTexto,
     antesala: () => abrirAntesala(),
     sonido: (x) => { if (x === sonido.mudo) sonido.alternarMudo(); antesala && antesala.actualizar(estado()); },
@@ -526,7 +596,7 @@ function accPanel() {
 }
 function sincronizarPanel() {
   if (!panel) return;
-  panel.vista({ sonido: !sonido.mudo, volumen: sonido.vol, ficha: fichaOn, recorrido, calidad: calidadManual === null ? 'automática' : CALIDADES[calidadManual].nombre });
+  panel.vista({ sonido: !sonido.mudo, volumen: sonido.vol, ficha: fichaOn, recorrido, calidad: calidadManual === null ? 'automática' : CALIDADES[calidadManual].nombre, formato: formatoNombre });
 }
 function alternarRecorrido() {
   recorrido = !recorrido; aviso(recorrido ? `Recorrido · ${REC_S} s por sala` : 'Recorrido detenido');
@@ -581,6 +651,7 @@ addEventListener('keydown', (e) => {
   else if (e.key === '?' || (e.key === '/' && e.shiftKey)) { if (modo === 'sala') panel.alternar(); }
   else if (k === 'v') pantallaCompleta();
   else if (k === 'o' && modo === 'sala') captura();
+  else if (k === 'g' && modo === 'sala') grabar();
   // T (telemetría): instrumentos. Antes era I, pero I es parte de IJKL (stick derecho) y los abría al mirar hacia arriba
   else if (k === 't') { alternarInstrumentos(); antesala && antesala.actualizar(estado()); }
   else if (k === 'n') { aviso(sonido.alternarMudo() ? 'Sonido' : 'Silencio'); antesala && antesala.actualizar(estado()); sincronizarPanel(); }
@@ -616,7 +687,7 @@ function redimensionar() {
 
 // ---------- pausa al perder el foco (no competir con un juego u otras apps) ----------
 function pausar() {
-  if (pausado || TEST) return;
+  if (pausado || TEST || grabadora.activa) return;           // grabando no se pausa: el video saldría cortado
   pausado = true; sonido.pausar(); $('pausa').innerHTML = '<span>En pausa</span> la ventana perdió el foco'; $('pausa').classList.add('visible'); log({ type: 'pausa' });
 }
 function reanudar() {
@@ -752,6 +823,7 @@ window.__lab = {
   pulsar(b) { input.inject = b; },
   panel: () => panel,
   pista,
+  formato: (x) => fijarFormato(x), grabar: () => grabar(), grabarCancion: () => grabarCancion(), grabadora,
   simularPerdidaGPU() { simulandoPerdida = true; ctx.device.destroy(); },
   gobernar() { gobLento = 99; },
 };

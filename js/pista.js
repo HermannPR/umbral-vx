@@ -5,8 +5,13 @@
 //   · golpes por flujo espectral (solo lo que sube entre cuadros) con umbral adaptativo
 //     (media + k·desviación de los últimos ~1.5 s) y periodo refractario;
 //   · secciones aproximadas: energía corta contra larga (subida, drop, pausa);
-//   · BPM al cargar el archivo, por autocorrelación de la envolvente de golpes.
+//   · BPM al cargar el archivo, por autocorrelación de la envolvente de golpes;
+//   · tonalidad en vivo: croma de 12 notas con caída de ~4 s y perfiles de Krumhansl.
+// Con un archivo, además, la canción se analiza completa (analisis.js) mientras empieza a sonar: en cuanto el
+// mapa está listo, el estado sale de él en el instante exacto que se oye (golpes en el pulso, la subida sabe
+// cuándo llega el drop, la tonalidad compás por compás). Mientras tanto, y con el micrófono, manda el análisis vivo.
 // La salida tiene la misma forma que estado() de la máquina de Señal: la sala no distingue una de otra.
+import { analizar, ultimo, tonalidad, quinta, nombreTono } from './analisis.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const reducido = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const CLAVE = 'umbral.pista';
@@ -23,6 +28,7 @@ export class Pista {
     this.fuente = null;          // 'archivo' | 'mic' | null
     this.nombre = ''; this.buffer = null; this.dur = 0; this.offset = 0; this.t0 = 0; this.sonando = false; this.nodo = null;
     this.picos = null; this.bpm = 0; this.enSalaSenal = false; this.seguir = false;
+    this.mapa = null; this.analizando = null; this.tempo = 1; this.sinBucle = false; this.alTerminar = null;
     this.oyentes = new Set();
     this.reiniciarAnalisis();
   }
@@ -51,6 +57,9 @@ export class Pista {
     this.vol.connect(S.master); this.vol.connect(S.analizador);
     this.fdb = new Float32Array(this.an.frequencyBinCount);
     this.mag0 = new Float32Array(this.an.frequencyBinCount);
+    // a qué nota cae cada bin, para la tonalidad en vivo
+    const hz = ac.sampleRate / this.an.fftSize;
+    this.pcBin = Int8Array.from({ length: this.fdb.length }, (_, i) => { const f = i * hz; return f < 65 || f > 4200 ? -1 : ((Math.round(12 * Math.log2(f / 440)) + 69) % 12 + 12) % 12; });
   }
 
   async cargarArchivo(file) {
@@ -70,8 +79,25 @@ export class Pista {
       this.reiniciarAnalisis();
       this.S.generativa(false);
       this.reproducir(0);
+      this.analizarMapa(buf);
     } finally { this.cargando = null; this.avisar(); }
   }
+  // el mapa completo de la canción, en trozos (la canción ya suena con el análisis vivo)
+  analizarMapa(buf) {
+    this.mapa = null; this.analizando = 0; this.tempo = 1;
+    let ultAviso = 0;
+    analizar(buf, {
+      cancelado: () => this.buffer !== buf,
+      alAvanzar: (p) => { this.analizando = p; const n = performance.now(); if (n - ultAviso > 250) { ultAviso = n; this.avisar(); } },
+    }).then((m) => {
+      if (!m || this.buffer !== buf) return;
+      this.mapa = m; this.analizando = null; this.bpm = Math.round(m.bpm);
+      this.avisar();
+    }).catch((e) => { this.analizando = null; console.warn('análisis', e); this.avisar(); });
+  }
+  // el tempo puede salir al doble o a la mitad: ×2 / ÷2 lo corrigen a mano
+  fijarTempo(f) { this.tempo = f; if (this.mapa) this.bpm = Math.round(this.mapa.bpm * f); this.avisar(); }
+  get tono() { const M = this.mapa; return M ? M.tono.nombre : this.tonoVivo || ''; }
 
   async microfono() {
     this.asegurar();
@@ -94,6 +120,7 @@ export class Pista {
     if (this.stream) { this.stream.getTracks().forEach((t) => t.stop()); this.stream = null; }
     const habia = !!this.fuente;
     this.fuente = null; this.buffer = null; this.picos = null; this.nombre = ''; this.dur = 0; this.offset = 0; this.sonando = false; this.bpm = 0; this.seguir = false;
+    this.mapa = null; this.analizando = null; this.tonoVivo = '';
     if (habia && this.S.ac) this.S.generativa(true);
     if (avisar) this.avisar();
   }
@@ -102,8 +129,8 @@ export class Pista {
     if (this.fuente !== 'archivo' || !this.buffer) return;
     this.parar();
     const ac = this.S.ac, n = ac.createBufferSource();
-    n.buffer = this.buffer; n.loop = !!this.ajustes.bucle; n.connect(this.entrada);
-    n.onended = () => { if (this.nodo === n) { this.nodo = null; this.sonando = false; this.offset = 0; this.avisar(); } };
+    n.buffer = this.buffer; n.loop = !!this.ajustes.bucle && !this.sinBucle; n.connect(this.entrada);
+    n.onended = () => { if (this.nodo === n) { this.nodo = null; this.sonando = false; this.offset = 0; this.avisar(); if (this.alTerminar) this.alTerminar(); } };
     this.offset = clamp(desde, 0, Math.max(0, this.dur - 0.05)); this.t0 = ac.currentTime;
     n.start(0, this.offset);
     this.nodo = n; this.sonando = true;
@@ -133,21 +160,34 @@ export class Pista {
     this.b = [0, 0, 0]; this.pico = [1e-3, 1e-3, 1e-3]; this.hist = BANDAS.map(() => new Float32Array(HIST)); this.hi = 0; this.llenos = 0;
     this.ult = [-99, -99, -99]; this.corto = 0; this.largo = 0; this.minRatio = 1; this.minT = 0;
     this.r = { real: true, pista: true, tv: 0, estilo: 'tu música', bpm: 120, seccion: 'intro', prog: 0, compas: 0, compases: 8,
-      tKick: -99, kick: 0, tCaja: -99, tDrop: -99, tHueco: -99, wob: 0, bandas: [0, 0, 0] };
+      tKick: -99, kick: 0, tCaja: -99, tDrop: -99, tHueco: -99, wob: 0, bandas: [0, 0, 0],
+      tBeat: -99, tono: -1, menor: false, brillo: 0.5, energia: 0, mapa: false };
     this.tPrev = performance.now() / 1000; this.subeT = 0;
+    this.crV = new Float32Array(12); this.tonoT = 0;
   }
 
   // una lectura por cuadro (la llama la sala); devuelve el estado en el mismo formato que la máquina de Señal
   estado() {
     const r = this.r, now = performance.now() / 1000, dt = clamp(now - this.tPrev, 1 / 240, 0.1);
-    this.tPrev = now; r.tv = now;
+    this.tPrev = now;
+    r.mapa = !!(this.mapa && this.fuente === 'archivo');
     if (!this.an || !this.fuente || (this.fuente === 'archivo' && !this.sonando)) {
+      // en pausa el reloj sigue corriendo para que los destellos se apaguen solos
+      r.tv = r.mapa ? r.tv + dt : now;
       for (let k = 0; k < 3; k++) this.b[k] *= Math.exp(-dt * 3);
       r.wob = this.b[1] * this.ajustes.medios; r.bandas = this.b.slice(); r.seccion = this.fuente ? 'pausa' : 'intro';
       return r;
     }
+    if (r.mapa) return this.estadoMapa(dt);
+    r.tv = now;
     const A = this.ajustes, an = this.an, hz = this.S.ac.sampleRate / an.fftSize;
     an.getFloatFrequencyData(this.fdb);
+    // croma vivo (~4 s de memoria) → tonalidad cada medio segundo
+    const caeC = Math.exp(-dt / 4);
+    for (let k = 0; k < 12; k++) this.crV[k] *= caeC;
+    for (let i = 1; i < this.fdb.length; i++) { const p = this.pcBin[i]; if (p >= 0 && this.fdb[i] > -100) this.crV[p] += Math.pow(10, this.fdb[i] / 20); }
+    this.tonoT += dt;
+    if (this.tonoT > 0.5) { this.tonoT = 0; const t = tonalidad(this.crV); if (t.conf > 0.15) { r.tono = quinta(t.pc, t.menor); r.menor = t.menor; this.tonoVivo = nombreTono(t.pc, t.menor); } }
     const flujo = [0, 0, 0], energia = [0, 0, 0];
     BANDAS.forEach(([a, b], k) => {
       const i0 = Math.max(1, Math.floor(a / hz)), i1 = Math.min(this.fdb.length - 1, Math.ceil(b / hz));
@@ -203,6 +243,44 @@ export class Pista {
     const compas = (240 / r.bpm);
     const t = this.fuente === 'archivo' ? this.pos() : now;
     r.compas = Math.floor(t / compas) % 8; r.compases = 8;
+    r.wob = clamp(this.b[1] * A.medios, 0, 1);
+    r.bandas = this.b.slice();
+    return r;
+  }
+
+  // con el mapa: todo sale del instante que se oye (posición del audio menos la latencia de salida)
+  estadoMapa(dt) {
+    const M = this.mapa, r = this.r, A = this.ajustes, ac = this.S.ac;
+    let t = this.pos() - (ac.outputLatency || ac.baseLatency || 0);
+    if (t < 0) t = this.nodo && this.nodo.loop ? t + this.dur : 0;
+    r.tv = t;
+    const f = clamp((t - M.off) * M.fps, 0, M.nF - 1), i0 = Math.floor(f), fr = f - i0, i1 = Math.min(M.nF - 1, i0 + 1);
+    const caida = 0.35 + (0.04 - 0.35) * A.suavizado;
+    for (let k = 0; k < 3; k++) {
+      const v = clamp(M.bandas[k][i0] * (1 - fr) + M.bandas[k][i1] * fr, 0, 1);
+      this.b[k] += (v - this.b[k]) * clamp((v > this.b[k] ? 0.6 : caida) * dt * 60, 0, 1);
+    }
+    // la sensibilidad decide qué golpes cuentan, por su fuerza (la mediana de la canción vale 1)
+    const um = 0.5 / clamp(A.sensibilidad, 0.2, 3);
+    const ev = (E) => { let i = ultimo(E.t, t), n = 0; while (i >= 0 && E.s[i] < um && n < 32) { i--; n++; } return n >= 32 ? -1 : i; };
+    const ik = ev(M.golpes); r.tKick = ik >= 0 ? M.golpes.t[ik] : -99; r.kick = ik >= 0 ? clamp(0.45 + 0.3 * M.golpes.s[ik], 0.45, 1) : 0;
+    const ic = ev(M.cajas); r.tCaja = ic >= 0 ? M.cajas.t[ic] : -99;
+    const id = ultimo(M.drops, t); r.tDrop = id >= 0 ? M.drops[id] : -99;
+    const ih = ultimo(M.huecos, t); r.tHueco = ih >= 0 && M.huecos[ih] > r.tDrop ? M.huecos[ih] : -99;
+    let a = 0, b = M.secciones.length - 1;
+    while (a < b) { const m = (a + b + 1) >> 1; if (M.secciones[m].t0 <= t) a = m; else b = m - 1; }
+    const s = M.secciones[a] || { tipo: 'intro', t0: 0, t1: 1 };
+    r.seccion = s.tipo; r.prog = s.tipo === 'subida' || s.tipo === 'drop' ? clamp((t - s.t0) / Math.max(0.01, s.t1 - s.t0), 0, 1) : 0;
+    // pulsos y compases (con la corrección ×2 / ÷2 del tempo)
+    const ib = Math.max(0, ultimo(M.beats, t)), tb = M.beats[ib] ?? 0, per = (M.beats[ib + 1] ?? tb + M.periodo) - tb;
+    const ic2 = Math.max(0, ultimo(M.compases, t)), tc = M.compases[ic2] ?? 0, perC = (M.compases[ic2 + 1] ?? tc + M.periodo * 4) - tc;
+    if (this.tempo === 2) { const mitad = t - tb >= per / 2; r.tBeat = tb + (mitad ? per / 2 : 0); r.compas = ic2 * 2 + (t - tc >= perC / 2 ? 1 : 0); }
+    else if (this.tempo === 0.5) { const i2 = ib - (ib % 2); r.tBeat = M.beats[i2] ?? tb; r.compas = ic2 >> 1; }
+    else { r.tBeat = tb; r.compas = ic2; }
+    r.compases = this.tempo === 2 ? M.compases.length * 2 : this.tempo === 0.5 ? M.compases.length >> 1 : M.compases.length;
+    r.bpm = M.bpm * this.tempo;
+    r.tono = M.tonoC[ic2] ?? M.tono.quinta; r.menor = !!M.menorC[ic2];
+    r.brillo = M.brillo[i0]; r.energia = M.energia[i0];
     r.wob = clamp(this.b[1] * A.medios, 0, 1);
     r.bandas = this.b.slice();
     return r;
