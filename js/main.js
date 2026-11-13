@@ -652,7 +652,7 @@ addEventListener('keydown', (e) => {
   if (!antesala) return;
   // dentro del panel solo cuentan «?» (cerrarlo) y esc (devolverle el foco a la sala)
   if (enPanel(e)) {
-    if (e.key === '?') { e.preventDefault(); panel.cerrar(); }
+    if (e.key === '?' && !(e.target.matches && e.target.matches('input[type=search], input[type=text]'))) { e.preventDefault(); panel.cerrar(); }
     else if (e.key === 'Escape') { e.target.blur && e.target.blur(); }
     return;
   }

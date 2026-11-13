@@ -12,6 +12,9 @@
 import { makeShader, U } from '../gpu.js';
 import { FS_VERT } from '../util.js';
 import { SENAL_ESTILOS } from '../sonido.js';
+import { Catalogo, NOMBRE_COL } from '../motores/catalogo.js';
+import { Oido } from '../motores/oido.js';
+import { PRESETS_UMBRAL } from '../motores/presets-umbral.js';
 
 const FUENTES = { osc: 0, noise: 1, voronoi: 2, shape: 3, anillos: 4, rayos: 5, tablero: 6 };
 const GEO = { rotate: 1, scale: 2, kaleid: 3, scroll: 4, pixelate: 5, repeat: 6, modulate: 7, modulateRotate: 8, modulateScale: 9, espejo: 10, tunel: 11, ondas: 12, esfera: 13 };
@@ -62,6 +65,7 @@ const FX_BASE = { color: 'tonalidad', escenas: 'manual', osciloscopio: true, bar
 const CLAVE_FX = 'umbral.senal';
 const TAU = Math.PI * 2;
 // gira el matiz conservando la luminancia (rotación en el plano I-Q de YIQ)
+const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 function girar(c, a) {
   if (!a) return c;
   const y = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2], i = 0.596 * c[0] - 0.274 * c[1] - 0.322 * c[2], q = 0.211 * c[0] - 0.523 * c[1] + 0.312 * c[2];
@@ -239,13 +243,27 @@ struct CU {
   b: vec4f,  // t, golpe, caja, drop
   c: vec4f,  // destello, inversión, croma, cortes
   d: vec4f,  // tinta clara rgb, amplitud del osciloscopio
-  e: vec4f,  // bombeo, apagón (hueco antes del drop), grosor de línea (px), _
+  e: vec4f,  // bombeo, apagón (hueco antes del drop), grosor de línea (px), giro de matiz (presets de otros motores)
   f: vec4f,  // barrido (líneas), zoom radial, espejo (0 no, 1 horizontal, 2 cuatro), _
+  g: vec4f,  // fracción de la fuente anterior (x, y), mezcla (1 = solo la nueva), _
   onda: array<vec4f, 64>,
 };
 @group(0) @binding(0) var<uniform> cu: CU;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var smp: sampler;
+@group(0) @binding(3) var src2: texture_2d<f32>;
+// la fuente de ahora (parche, GLSL, ISF, MilkDrop o fosfora) y, mientras se funden, la anterior
+fn tomar(uv: vec2f) -> vec3f {
+  let a = textureSampleLevel(src, smp, uv * cu.a.zw, 0.0).rgb;
+  if (cu.g.z >= 0.999) { return a; }
+  return mix(textureSampleLevel(src2, smp, uv * cu.g.xy, 0.0).rgb, a, cu.g.z);
+}
+// gira el matiz conservando la luminancia (YIQ), como girar() en JS
+fn matiz(c: vec3f, a: f32) -> vec3f {
+  let y = dot(c, vec3f(0.299, 0.587, 0.114)); let i0 = dot(c, vec3f(0.596, -0.274, -0.322)); let q0 = dot(c, vec3f(0.211, -0.523, 0.312));
+  let ca = cos(a); let sa = sin(a); let i2 = i0 * ca - q0 * sa; let q2 = i0 * sa + q0 * ca;
+  return max(vec3f(0.0), vec3f(y + 0.956 * i2 + 0.621 * q2, y - 0.272 * i2 - 0.647 * q2, y - 1.106 * i2 + 1.703 * q2));
+}
 fn h1(x: f32) -> f32 { return fract(sin(x * 91.345) * 47453.5453); }
 fn ondaEn(x: f32) -> f32 {
   let f = clamp(x, 0.0, 1.0) * 255.0; let i = u32(floor(f)); let j = min(i + 1u, 255u);
@@ -263,21 +281,22 @@ fn ondaEn(x: f32) -> f32 {
   // espejo de pantalla: la mitad izquierda (o el cuarto superior izquierdo) se refleja
   if (cu.f.z > 0.5) { uv.x = 0.5 - abs(uv.x - 0.5); if (cu.f.z > 1.5) { uv.y = 0.5 - abs(uv.y - 0.5); } }
   uv = (uv - 0.5) * (1.0 - cu.b.y * 0.03 - cu.b.w * 0.07) + 0.5;
-  let fr2 = cu.a.zw; let dir = uv - 0.5; let cr = cu.c.z;
+  let dir = uv - 0.5; let cr = cu.c.z;
   let lo = vec2f(0.001); let hi = vec2f(0.999);
-  let r = textureSampleLevel(src, smp, clamp(uv + dir * cr, lo, hi) * fr2, 0.0).r;
-  let gg = textureSampleLevel(src, smp, clamp(uv, lo, hi) * fr2, 0.0).g;
-  let b = textureSampleLevel(src, smp, clamp(uv - dir * cr, lo, hi) * fr2, 0.0).b;
+  let r = tomar(clamp(uv + dir * cr, lo, hi)).r;
+  let gg = tomar(clamp(uv, lo, hi)).g;
+  let b = tomar(clamp(uv - dir * cr, lo, hi)).b;
   var c = vec3f(r, gg, b);
   // zoom radial: estela hacia el centro en los golpes y el drop
   let zb = cu.f.y;
   if (zb > 0.002) {
     for (var k = 1; k <= 6; k++) {
       let uk = dir * (1.0 - zb * f32(k) / 6.0) + 0.5;
-      c += textureSampleLevel(src, smp, clamp(uk, lo, hi) * fr2, 0.0).rgb;
+      c += tomar(clamp(uk, lo, hi));
     }
     c /= 7.0;
   }
+  if (abs(cu.e.w) > 0.001) { c = matiz(c, cu.e.w); }
   c *= cu.e.x * (1.0 - cu.e.y * 0.88);
   // osciloscopio: la onda real de la mezcla cruzando la lámina
   let amp = cu.d.w;
@@ -368,7 +387,7 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1
 
 const fmtN = (v) => (Math.abs(v) >= 10 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2)).replace(/\.0+$/, '');
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const U_GEN = 160 + 6 * 32 + 6 * 16, U_COMP = 96 + 64 * 16;
+const U_GEN = 160 + 6 * 32 + 6 * 16, U_COMP = 112 + 64 * 16;
 
 export default class Senal {
   static palettes = DUOS.map((d) => d.nombre);
@@ -396,7 +415,7 @@ export default class Senal {
     this.nMax = Math.max(4096, Math.round((32768 * (this.ctx.calidad ? this.ctx.calidad.carga : 1)) / 256) * 256);
     this.ps = U.storage(d, this.nMax * 32);
     this.bgS = [0, 1].map((k) => d.createBindGroup({ layout: this.pS.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.u } }, { binding: 1, resource: this.vistas[1 - k] }, { binding: 2, resource: this.smp }] }));
-    this.bgC = [0, 1].map((k) => d.createBindGroup({ layout: this.pC.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uc } }, { binding: 1, resource: this.vistas[k] }, { binding: 2, resource: this.smp }] }));
+    this.grupos = new Map();
     this.bgP = d.createBindGroup({ layout: this.pP.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.ps } }, { binding: 1, resource: { buffer: this.up } }] });
     this.bgR = d.createBindGroup({ layout: this.pR.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.ps } }, { binding: 1, resource: { buffer: this.ur } }] });
     this.lado = 0; this.reac = 1; this.linea = 0; this.ultNav = 0; this.t0 = performance.now(); this.edad = 0;
@@ -406,11 +425,23 @@ export default class Senal {
     this.onda = new Float32Array(256); this.tdom = new Float32Array(1024);
     this.vivoTxt = ''; this.calTxt = ''; this.calT = 0;
     this.estiloI = 0; this.i = 0;
+    // catálogo de todos los motores (parches propios, GLSL, MilkDrop, ISF, fosfora) y el oído que los alimenta
+    this.oido = new Oido(); this.motores = {}; this.motoresP = {}; this.ext = {}; this.tokSel = 0;
+    this.cat = new Catalogo({ base: 'presets', parches: PARCHES.map((p) => p.nombre), propios: PRESETS_UMBRAL });
+    this.motorAct = 'senal'; this.fuente = null; this.fuenteAnt = null; this.mezclaF = 1; this.hue0 = 0; this.capaSel = null;
     // color y escenas: matiz actual y objetivo (radianes), compases contados y transición entre parches
     this.fx = { ...FX_BASE };
     try { Object.assign(this.fx, JSON.parse(localStorage.getItem(CLAVE_FX) || '{}')); } catch {}
     this.hue = 0; this.hueObj = 0; this.ultCompas = null; this.nCompases = 0; this.ultSec = ''; this.dropVisto = -1; this.trans = 0;
     this.ponerEstilo(0);
+    const guardado = this.cat.estado.id;
+    if (guardado && guardado.startsWith('senal/')) this.cargar(+guardado.slice(6));
+    this.cat.cargar().then(() => {
+      if (this.muerta) return;
+      const e = guardado && this.cat.porId.get(guardado);
+      if (e && e.m !== 'senal') this.elegir(e, 0);
+      if (this.cat.estado.fx) this.capa(this.cat.estado.fx);
+    });
     // «tu música»: si hay una canción propia (o el micrófono), la sala la escucha a ella en vez de la máquina
     this.pista = this.ctx.sonido && this.ctx.sonido.pista;
     if (this.pista) this.quitarOyente = this.pista.alCambiar(() => this.codigo());
@@ -435,6 +466,93 @@ export default class Senal {
     this.i = (i + PARCHES.length) % PARCHES.length;
     this.P = JSON.parse(JSON.stringify(PARCHES[this.i]));
     this.linea = 0;
+    if (this.cat && this.motorAct === 'senal') { this.sel = this.cat.porId.get('senal/' + this.i); this.cat.estado.id = this.sel.id; this.cat.guardar(); this.cat.avisar(); }
+  }
+  // ---- motores de presets: se cargan la primera vez que hacen falta ----
+  motor(m) {
+    const k = m === 'isf' ? 'gl' : m;
+    if (this.motores[k]) return Promise.resolve(this.motores[k]);
+    if (this.motoresP[k]) return this.motoresP[k];
+    const avisar = (x) => console.warn('[señal]', x);
+    return (this.motoresP[k] = (async () => {
+      const { device: d, W, H } = this.ctx;
+      const destino = () => d.createTexture({ size: [W, H], format: 'rgba8unorm-srgb', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT });
+      let M;
+      if (k === 'gl') { const { MotorGL } = await import('../motores/glsl.js'); M = new MotorGL({ report: avisar }); }
+      else if (k === 'md') {
+        const { MotorMilkdrop } = await import('../motores/milkdrop.js');
+        const S = this.ctx.sonido; if (!S.ac) S.iniciar(true);
+        if (!S.ac) throw new Error('MilkDrop necesita el audio: toca una tecla primero');
+        M = new MotorMilkdrop({ report: avisar, base: 'presets/milkdrop', presets: 'presets/milkdrop/p' });
+        await M.iniciar(S.ac);
+      } else if (k === 'wgsl') { const { MotorWGSL } = await import('../motores/wgsl.js'); M = new MotorWGSL(d, { report: avisar, base: 'presets/fosfora' }); }
+      if (this.muerta) { M.destroy(); return null; }
+      if (k === 'gl' || k === 'md') { this.ext[k] = destino(); this.ext[k + 'V'] = this.ext[k].createView(); }
+      return (this.motores[k] = M);
+    })().catch((e) => { this.motoresP[k] = null; throw e; }));
+  }
+  // elige un preset del catálogo (de cualquier motor); devuelve false si no se pudo
+  async elegir(e, seg = 1.2) {
+    if (!e) return false;
+    const tok = ++this.tokSel, antes = this.fuente, k = e.m === 'isf' ? 'gl' : e.m;
+    if (e.m === 'senal') { this.cargar(e.i); this.trans = 1; }
+    else {
+      let ok = false;
+      try {
+        const M = await this.motor(e.m);
+        if (!M || tok !== this.tokSel) return false;
+        const mismo = this.motorAct === k;
+        if (e.m === 'gl') ok = M.usar(e.preset, mismo ? seg : 0);
+        else if (e.m === 'isf') {
+          if (!e.fuente) e.fuente = await fetch(`presets/${e.f}`).then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); });
+          if (tok !== this.tokSel) return false;
+          ok = M.usar({ id: e.id, tipo: 'isf', fuente: e.fuente }, mismo ? seg : 0);
+        } else if (e.m === 'md') ok = await M.usar(e, mismo && seg > 0 ? 2.7 : 0);
+        else if (e.m === 'wgsl') ok = await M.usar({ id: e.id, archivo: e.f.slice(e.f.indexOf('/') + 1), pfx: e.pfx });
+      } catch (err) { console.warn('[señal]', e.id, err); if (/audio/.test(err.message)) return false; }
+      if (tok !== this.tokSel) return false;
+      if (!ok) { this.cat.marcarMalo(e.id); return false; }
+    }
+    // entre motores distintos (o entre efectos de fosfora) la imagen anterior se queda quieta y se desvanece
+    if (antes && seg > 0 && (k !== this.motorAct || k === 'wgsl')) { this.fuenteAnt = antes; this.mezclaF = 0; }
+    this.motorAct = k; this.sel = e; this.hue0 = this.hue;
+    this.cat.estado.id = e.id; this.cat.guardar();
+    this.linea = 0; this.codigo(); this.cat.avisar();
+    return true;
+  }
+  // si un preset falla, el siguiente en la misma dirección
+  async saltarA(dir, azar = false) {
+    let id = this.sel && this.sel.id;
+    for (let n = 0; n < 6; n++) {
+      const e = azar ? this.cat.azar(id) : this.cat.vecino(id, dir);
+      if (!e) return null;
+      if (await this.elegir(e)) return e;
+      if (!azar) id = e.id;
+    }
+    return null;
+  }
+  // capa de efecto ISF sobre el preset (motores GLSL/ISF y MilkDrop); null la quita
+  async capa(id) {
+    const e = id ? this.cat.porId.get(id) : null;
+    this.capaSel = e || null; this.cat.estado.fx = e ? e.id : null; this.cat.guardar();
+    try {
+      if (!e) { if (this.motores.gl) this.motores.gl.ponerFiltro(null); }
+      else {
+        const M = await this.motor('gl');
+        if (!e.fuente) e.fuente = await fetch(`presets/${e.f}`).then((r) => r.text());
+        if (this.capaSel !== e) return false;
+        if (!M.ponerFiltro({ id: e.id, tipo: 'isf', fuente: e.fuente })) { this.capaSel = null; this.cat.estado.fx = null; this.cat.guardar(); }
+      }
+    } catch (err) { console.warn('[señal] capa', err); this.capaSel = null; }
+    this.codigo(); this.cat.avisar();
+    return !!this.capaSel === !!e;
+  }
+  get capaAplica() { return this.motorAct === 'gl' || this.motorAct === 'md'; }
+  grupoC(a, b) {
+    let m = this.grupos.get(a); if (!m) this.grupos.set(a, (m = new Map()));
+    let g = m.get(b);
+    if (!g) { g = this.ctx.device.createBindGroup({ layout: this.pC.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uc } }, { binding: 1, resource: a }, { binding: 2, resource: this.smp }, { binding: 3, resource: b }] }); m.set(b, g); }
+    return g;
   }
   get conPista() { return !!(this.pista && this.pista.activa); }
   // lo que el panel puede elegir: carácter (cómo golpea), parche y tintas
@@ -450,15 +568,11 @@ export default class Senal {
     this.codigo();
   }
   // cambio de escena: otro parche al azar; la retroalimentación funde el viejo con el nuevo
-  cambiarEscena() {
-    let j = this.i;
-    while (j === this.i) j = Math.floor(Math.random() * PARCHES.length);
-    this.cargar(j); this.trans = 1; this.codigo();
-  }
+  cambiarEscena() { this.saltarA(1, true); }
   fijar(k, i) {
     if (i < 0) return;
     if (k === 'look') { const pal = this.palette, par = this.i; this.ponerEstilo(i); if (this.conPista) { this.cargar(par); this.palette = this.palPrev = pal; } }
-    else if (k === 'parche') this.cargar(i);
+    else if (k === 'parche') { this.elegir(this.cat.porId.get('senal/' + i)); return; }
     else if (k === 'tintas') { this.palette = this.palPrev = i; }
     this.codigo();
   }
@@ -480,7 +594,15 @@ export default class Senal {
     L.push({ txt: `.tintas('${DUOS[this.palette].nombre}')`, ref: null });
     return L;
   }
+  // un preset de otro motor, también como código: qué es, de quién y con qué licencia
+  lineasExt() {
+    const e = this.sel, L = [{ txt: `preset('${escH(e.n)}')`, ref: null }, { txt: `  .de('${escH(e.a)}')  · ${escH(e.l)}`, ref: null },
+      { txt: `  .coleccion('${escH(NOMBRE_COL[e.c] || e.c)}')`, ref: null }];
+    if (this.capaSel) L.push({ txt: `  .capa('${escH(this.capaSel.n)}')${this.capaAplica ? '' : '  // no aplica a este motor'}`, ref: null });
+    return L;
+  }
   codigo() {
+    if (this.motorAct !== 'senal' && this.sel) return this.codigoExt();
     const L = this.lineas(), E = SENAL_ESTILOS[this.estiloI], Pi = this.conPista ? this.pista : null;
     this.nLineas = L.length;
     const tono = Pi && Pi.tono ? `, '${Pi.tono}'` : '';
@@ -501,7 +623,29 @@ export default class Senal {
       <div class="rotulo" style="margin-top:2px;color:var(--papel-3)">inspirado en Hydra (hydra.ojack.xyz) · implementación propia</div></div>`;
     this.vivoEl = document.getElementById('senal-vivo');
   }
+  codigoExt() {
+    const L = this.lineasExt(), E = SENAL_ESTILOS[this.estiloI], Pi = this.conPista ? this.pista : null, e = this.sel;
+    this.nLineas = L.length;
+    const tono = Pi && Pi.tono ? `, '${escH(Pi.tono)}'` : '';
+    const cab = Pi ? `escuchar('${escH((Pi.nombre || '').replace(/'/g, '’').slice(0, 34))}'${Pi.bpm ? ', ~' + Pi.bpm : ''}${tono})` : `musica('${E.nombre}', ${E.bpm})`;
+    const pos = this.cat.posicion(e.id), tot = this.cat.lista.length;
+    const F = this.fx, fxs = [F.barrido > 0 && `barrido(${fmtN(F.barrido)})`, F.zoom > 0 && `zoom(${fmtN(F.zoom)})`, F.espejo !== 'no' && `espejo('${F.espejo}')`, F.estrobo && 'estrobo()'].filter(Boolean);
+    const extra = [];
+    if (F.color !== 'fijas') extra.push(`.color('${F.color}')`);
+    if (F.escenas !== 'manual') extra.push(`.escenas('${F.escenas}')`);
+    if (fxs.length) extra.push('.' + fxs.join('.'));
+    this.ctx.capa.innerHTML = `<div style="position:absolute;left:44px;top:38px;max-width:min(560px,calc(100% - 88px));font:400 13px/1.75 var(--mono);color:var(--papel-2);
+      padding:14px 18px 14px 16px;background:rgba(12,11,9,.72);border-left:1px solid var(--acento)">
+      <div class="rotulo-t" style="margin-bottom:6px">estilo ${this.estiloI + 1} / ${SENAL_ESTILOS.length} · preset ${pos ? pos.toLocaleString('es-ES') + ' / ' + tot.toLocaleString('es-ES') : '—'}${this.cat.favs.has(e.id) ? ' · ★' : ''}</div>
+      <div style="white-space:pre;color:var(--papel)"><span style="display:inline-block;width:14px"></span>${cab}</div>
+      <div id="senal-vivo" style="white-space:pre;color:var(--acento);margin-bottom:4px"><span style="display:inline-block;width:14px"></span>  ${this.vivoTxt}</div>
+      ${L.map((l, k) => `<div style="white-space:pre;overflow:hidden;text-overflow:ellipsis;${k ? '' : 'color:var(--papel)'}"><span style="display:inline-block;width:14px;color:var(--acento)">${k ? '' : '›'}</span>${k ? '' : '  '}${l.txt}</div>`).join('')}
+      ${extra.map((x) => `<div style="white-space:pre;color:var(--papel-3)"><span style="display:inline-block;width:14px"></span>  ${x}</div>`).join('')}
+      <div class="rotulo" style="margin-top:10px;color:var(--papel-3)">← → otro preset · C el siguiente · el panel (?) busca entre ${this.cat.todos.length.toLocaleString('es-ES')}</div></div>`;
+    this.vivoEl = document.getElementById('senal-vivo');
+  }
   ajustar(dir) {
+    if (this.motorAct !== 'senal') { this.saltarA(dir); return; }
     const l = this.lineas()[this.linea];
     if (!l || !l.ref) { this.palette = (this.palette + dir + DUOS.length) % DUOS.length; this.palPrev = this.palette; this.codigo(); return; }
     const r = l.ref, k = l.idx, v = r[k];
@@ -511,7 +655,7 @@ export default class Senal {
     this.codigo();
   }
   // C / Y: siguiente parche (main.js anuncia lo que devuelve)
-  accionY() { this.cargar(this.i + 1); this.codigo(); return 'Parche · ' + this.P.nombre; }
+  accionY() { const e = this.cat.vecino(this.sel && this.sel.id, 1); this.saltarA(1); return e ? 'Preset · ' + e.n : ''; }
   // ↑ ↓ cambian de estilo musical; la música cambia en el siguiente tiempo
   nombreModo() { return SENAL_ESTILOS[this.estiloI].nombre; }
   cambiarModo(dir) { this.ponerEstilo(this.estiloI + dir); this.ultNav = performance.now(); return this.nombreModo(); }
@@ -559,8 +703,10 @@ export default class Senal {
     this.gobernar(dt);
     if (inp.pressed.a) this.saltar();
     if (this.palette !== this.palPrev) { this.palPrev = this.palette; this.codigo(); }
-    if (now - this.ultNav > 170) {
-      if (inp.ly < -0.6) { this.linea = (this.linea - 1 + this.nLineas) % this.nLineas; this.ultNav = now; this.codigo(); }
+    const ext = this.motorAct !== 'senal' ? this.motores[this.motorAct] : null;
+    if (now - this.ultNav > (ext ? 380 : 170)) {
+      if (ext) { if (inp.lx > 0.6 || inp.ly > 0.6) { this.ajustar(1); this.ultNav = now; } else if (inp.lx < -0.6 || inp.ly < -0.6) { this.ajustar(-1); this.ultNav = now; } }
+      else if (inp.ly < -0.6) { this.linea = (this.linea - 1 + this.nLineas) % this.nLineas; this.ultNav = now; this.codigo(); }
       else if (inp.ly > 0.6) { this.linea = (this.linea + 1) % this.nLineas; this.ultNav = now; this.codigo(); }
       else if (inp.lx > 0.6) { this.ajustar(1); this.ultNav = now; }
       else if (inp.lx < -0.6) { this.ajustar(-1); this.ultNav = now; }
@@ -648,8 +794,7 @@ export default class Senal {
     fc.set([...D[2], F.osciloscopio ? (0.05 + 0.1 * enDrop + 0.04 * sub) / Math.max(0.25, amp) * 0.5 : 0], 12);
     fc.set([1 + kick * 0.22 * V.golpe * R, hueco, (1.1 + dropG * 3 + kick) * (H / 1000), 0], 16);
     fc.set([F.barrido, clamp(F.zoom * (kick * 0.12 * V.golpe + dropG * 0.3 + sub * sub * 0.08) * R, 0, 0.5), ESPEJO.indexOf(F.espejo), 0], 20);
-    fc.set(this.onda, 24);
-    d.queue.writeBuffer(this.uc, 0, fc);
+    fc.set(this.onda, 28);
 
     // ---- chispas ----
     const fp = this.fp;
@@ -661,19 +806,69 @@ export default class Senal {
     d.queue.writeBuffer(this.ur, 0, fr);
 
     const cp = this.ctx.cpass(enc); cp.setPipeline(this.pP); cp.setBindGroup(0, this.bgP); cp.dispatchWorkgroups(Math.ceil(n / 256)); cp.end();
-    const k = this.lado; this.lado ^= 1;
-    const rp = this.ctx.rpass(enc, { colorAttachments: [{ view: this.vistas[k], loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
-    rp.setViewport(0, 0, iw, ih, 0, 1); rp.setScissorRect(0, 0, iw, ih);
-    rp.setPipeline(this.pS); rp.setBindGroup(0, this.bgS[k]); rp.draw(3); rp.end();
+    let fuente;
+    if (ext) fuente = this.dibujarMotor(enc, ext, { kick: Math.min(1.5, kick * R), caja, drop, sub, hue: this.hue }, A, dt, iw, ih);
+    if (!fuente) {
+      const k = this.lado; this.lado ^= 1;
+      const rp = this.ctx.rpass(enc, { colorAttachments: [{ view: this.vistas[k], loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
+      rp.setViewport(0, 0, iw, ih, 0, 1); rp.setScissorRect(0, 0, iw, ih);
+      rp.setPipeline(this.pS); rp.setBindGroup(0, this.bgS[k]); rp.draw(3); rp.end();
+      this.fracPrev = frac;
+      fuente = { vista: this.vistas[k], frac };
+    }
+    this.fuente = fuente;
+    // fundido desde la fuente anterior (otro motor): se queda quieta y se desvanece
+    if (this.fuenteAnt) { this.mezclaF = Math.min(1, this.mezclaF + dt / 1.1); if (this.mezclaF >= 1) this.fuenteAnt = null; }
+    const ant = this.fuenteAnt, mz = this.mezclaF * this.mezclaF * (3 - 2 * this.mezclaF);
+    fc.set([fuente.frac[0], fuente.frac[1]], 2);
+    fc.set(ant ? [ant.frac[0], ant.frac[1], mz, 0] : [1, 1, 1, 0], 24);
+    // el color de los presets ajenos gira desde su color original cuando la sala cambia de matiz (salvo los que ya leen uHue)
+    fc[19] = ext && this.motorAct !== 'gl' && F.color !== 'fijas' ? this.hue - this.hue0 : ext && this.motorAct === 'gl' && this.sel && this.sel.m === 'isf' && F.color !== 'fijas' ? this.hue - this.hue0 : 0;
+    d.queue.writeBuffer(this.uc, 0, fc);
     const rc = this.ctx.rpass(enc, { colorAttachments: [{ view: this.ctx.post.hdrView, loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
-    rc.setPipeline(this.pC); rc.setBindGroup(0, this.bgC[k]); rc.draw(3);
+    rc.setPipeline(this.pC); rc.setBindGroup(0, this.grupoC(fuente.vista, ant ? ant.vista : fuente.vista)); rc.draw(3);
     rc.setPipeline(this.pR); rc.setBindGroup(0, this.bgR); rc.draw(6, n); rc.end();
-    this.fracPrev = frac;
 
     this.post.bloom = 0.14 + kick * 0.12 * V.golpe + drop * 0.3 * V.destello;
     this.post.exposure = 0.92 + dropG * 0.15;
     this.pulso = kick;
     this.hud(A, dt);
+  }
+  // dibuja el preset del motor activo a resolución interna y devuelve { vista, frac } para la composición
+  dibujarMotor(enc, M, env, A, dt, iw0, ih0) {
+    const d = this.ctx.device, W = this.ctx.W, H = this.ctx.H, S = this.ctx.sonido;
+    // los motores externos cambian de tamaño solo por escalones de 1/8: cada cambio les borra el eco (feedback),
+    // y el gobernador mueve la resolución interna casi en cada cuadro
+    const e = iw0 / W;
+    if (!this.escM || Math.abs(e - this.escM) > 0.15 || e > this.escM + 0.07) this.escM = Math.min(1, Math.ceil(e * 8 - 0.01) / 8);
+    const iw = Math.max(16, Math.round(W * this.escM)), ih = Math.max(16, Math.round(H * this.escM));
+    const E = this.oido.leer(S && S.analizador, A, env, dt);
+    E.espectro = this.oido.espectro;
+    try {
+      if (this.motorAct === 'gl') {
+        M.tam(iw, ih); M.ponerAudio(this.oido.espectro, this.oido.onda); M.dibujar(E, dt);
+        d.queue.copyExternalImageToTexture({ source: M.canvas }, { texture: this.ext.gl }, [M.w, M.h]);
+        return { vista: this.ext.glV, frac: [M.w / W, M.h / H] };
+      }
+      if (this.motorAct === 'md') {
+        if (!M.actual) return null;
+        M.conectar(S && S.analizador); M.tam(iw, ih); M.dibujar();
+        // capa de efecto encima: el motor GL filtra el canvas de MilkDrop
+        const G = this.capaSel && this.motores.gl;
+        if (G && G.filtro) { G.ponerAudio(this.oido.espectro, this.oido.onda); G.filtrarFuente(M.canvas, E, dt); d.queue.copyExternalImageToTexture({ source: G.canvas }, { texture: this.ext.md }, [G.w, G.h]); }
+        else d.queue.copyExternalImageToTexture({ source: M.canvas }, { texture: this.ext.md }, [M.w, M.h]);
+        return { vista: this.ext.mdV, frac: [M.w / W, M.h / H] };
+      }
+      if (this.motorAct === 'wgsl') {
+        M.tam(W, H, iw, ih); M.dibujar(enc, E, dt, this.oido.onda);
+        return M.vista ? { vista: M.vista, frac: [M.w / W, M.h / H] } : null;
+      }
+    } catch (e) {
+      console.warn('[señal] motor', this.motorAct, e);
+      if (this.sel) this.cat.marcarMalo(this.sel.id);
+      this.motorAct = 'senal'; this.cargar(this.i); this.codigo();
+    }
+    return null;
   }
   // HUD: línea viva de la música y nivel real de calidad (sin rehacer el DOM cada cuadro)
   hud(A, dt) {
@@ -700,9 +895,12 @@ export default class Senal {
   stats() {
     const W = this.ctx.W, H = this.ctx.H, iw = Math.round(W * this.esc), ih = Math.round(H * this.esc);
     return [['píxeles generados / frame', (iw * ih).toLocaleString('es-ES'), true], ['nivel real', Math.round(this.nivel * 100) + ' %'], ['resolución interna', `${iw} × ${ih}`],
-      ['chispas', (this.nAct || 0).toLocaleString('es-ES')], ['estilo', SENAL_ESTILOS[this.estiloI].nombre], ['sección', (this.A && this.A.seccion) || '—'], ['parche', this.P.nombre], ['pulso', (this.pulso || 0).toFixed(2)]];
+      ['chispas', (this.nAct || 0).toLocaleString('es-ES')], ['estilo', SENAL_ESTILOS[this.estiloI].nombre], ['sección', (this.A && this.A.seccion) || '—'], ['preset', this.sel ? this.sel.n : this.P.nombre], ['motor', this.motorAct], ['pulso', (this.pulso || 0).toFixed(2)]];
   }
   destroy() {
+    this.muerta = true;
+    for (const k in this.motores) { try { this.motores[k].destroy(); } catch {} }
+    for (const k of ['gl', 'md']) if (this.ext[k]) this.ext[k].destroy();
     this.tex.forEach((t) => t.destroy()); [this.u, this.uc, this.up, this.ur, this.ps].forEach((b) => b.destroy());
     this.ctx.capa.innerHTML = '';
     if (this.quitarOyente) this.quitarOyente();

@@ -22,6 +22,7 @@ A gallery for heavy compute. You enter a lobby, pick a room, and each room is a 
 
 ## New in this version
 
+- **Señal is now a multi-engine visualizer with 1,817 presets.** One catalogue, one panel browser (search by name, author or tag, filter by collection, favourites, random, ← → to step) over five engines that all hear the same song: Señal's own patches, UMBRAL GLSL presets, **MilkDrop** (1,739 presets through [butterchurn](https://github.com/jberg/butterchurn)), **ISF** generators from [VIDVOX](https://github.com/Vidvox/ISF-Files) and [modV](https://github.com/vcync/modV), and **WGSL** effects from [fosfora](https://github.com/kevinraymond/fosfora) running natively on WebGPU. 162 ISF filters can sit on top as an effect layer. Every frame still goes through Señal's own compositing (hits, radial zoom, scanlines, colour that follows the key), presets crossfade into each other, and each one shows its name, author and license on screen.
 - **Bring your own music.** Drop an audio file anywhere on the page (or use the mic) and the *Señal* room listens and follows it: bass → hits, mids → twist, highs → sparks. Your song never leaves your machine — it is decoded and analysed in the browser.
 - **Señal hears the whole song first.** While it starts playing, the song is analysed offline (own code, no dependencies): beat grid with phase and downbeats, build-ups, the silence before each drop, the drops themselves, and the key bar by bar (chroma + Krumhansl profiles). Visuals then read that map at the exact moment you hear it, so hits land on the beat and a build-up knows how far the drop is. Tempo ×2 / ÷2 if it guesses double or half.
 - **Colour that follows the music.** Palettes rotate with the key (circle of fifths), on every drop, every bar, or as a slow rainbow. Scenes can change by themselves — on every drop, per section, or every 8/16 bars — melting into each other through the feedback loop.
@@ -31,6 +32,8 @@ A gallery for heavy compute. You enter a lobby, pick a room, and each room is a 
 - **Capture and share.** `O` saves a full-resolution PNG of the current frame, `V` goes fullscreen, and the panel copies a direct link to the room.
 - **Calmer palettes.** The *Bulbo* colour grades were rebalanced so the cyclic and two-tone palettes keep the shape readable instead of burning out.
 - **New generative music** for the lobby and reworked melodies in *Señal*.
+
+![Señal's preset browser: searching 1,817 presets across five engines](media/presets-senal.jpg)
 
 | Your music in *Señal* | The panel in *Bulbo* |
 |---|---|
@@ -110,11 +113,12 @@ Open `http://localhost:3000` (or `:8000`). WebGPU needs a secure context: `local
 - *Señal* is an homage to [Hydra](https://hydra.ojack.xyz) by Olivia Jack, with its own implementation.
 - The rooms build on Gray–Scott, Physarum (Jeff Jones), Stable Fluids (Jos Stam), Lattice Boltzmann, the Mandelbulb (Daniel White and Paul Nylander) and the Mandelbox (Tom Lowe).
 - Panel UI: [lil-gui](https://lil-gui.georgealways.com) by George Michael Brower (MIT).
+- *Señal* presets from other projects, each credited on screen and in `presets/indice.json`: MilkDrop presets by their many authors via [butterchurn-presets](https://github.com/jberg/butterchurn-presets) and [butterchurn](https://github.com/jberg/butterchurn) by Jordan Berg (MIT); ISF shaders from [VIDVOX ISF Files](https://github.com/Vidvox/ISF-Files) and [modV](https://github.com/vcync/modV) (MIT); WGSL effects from [fosfora](https://github.com/kevinraymond/fosfora) by Kevin Raymond (MIT or Apache-2.0).
 - Fonts: **STIX Two Text** and **Geist Mono**, SIL Open Font License 1.1.
 
 ## License
 
-Code: [MIT](LICENSE) © 2026 casiangel333 (HermannPR). Fonts keep their OFL license (`fuentes/OFL.txt`); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Code: [MIT](LICENSE) © 2026 casiangel333 (HermannPR). Fonts keep their OFL license (`fuentes/OFL.txt`) and the third-party presets under `presets/` keep their own licenses (MIT, or MIT/Apache-2.0 for fosfora); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 
@@ -128,6 +132,7 @@ Code: [MIT](LICENSE) © 2026 casiangel333 (HermannPR). Fonts keep their OFL lice
 
 **Lo nuevo**
 
+- **Señal ahora es un visualizador de varios motores con 1817 presets.** Un solo catálogo y un buscador en el panel (nombre, autor o etiqueta, colección, favoritos, al azar, ← → para avanzar) sobre cinco motores que oyen la misma canción: los parches propios de Señal, presets GLSL de UMBRAL, **MilkDrop** (1739 presets con butterchurn), generadores **ISF** de VIDVOX y modV, y efectos **WGSL** de fosfora nativos en WebGPU. 162 filtros ISF se pueden poner encima como capa de efecto. Todo pasa por la composición de Señal (golpes, zoom radial, líneas de monitor, color que sigue la tonalidad), los presets se funden entre sí y cada uno muestra su nombre, autor y licencia.
 - **Tu propia música.** Suelta un archivo de audio en cualquier parte de la página (o usa el micrófono) y la sala *Señal* lo escucha y lo sigue: graves → golpe, medios → torsión, agudos → chispas, con detección de tempo y de drops. Ajusta sensibilidad, suavizado y cada banda desde el panel. Tu canción no sale de tu equipo.
 - **Un panel lateral que no se va solo.** Arriba, una barra fija con lo más usado (sala anterior y siguiente, pausa, grabar video, pantalla completa, foto PNG, ocultar todo), cada botón con su tecla. Debajo, tu música y las acciones de la sala; plegados al final, ajustes, atajos de teclado e instrumentos. Ábrelo con `?`, ciérralo con `×`; recuerda cómo lo dejaste.
 - **Señal escucha la canción completa.** Mientras empieza a sonar, la analiza entera: pulsos, tiempo fuerte, subidas, el silencio antes del drop, los drops y la tonalidad compás por compás. La imagen lee ese mapa en el instante que oyes. Si el tempo sale al doble o a la mitad, ×2 / ÷2.
@@ -141,6 +146,6 @@ Code: [MIT](LICENSE) © 2026 casiangel333 (HermannPR). Fonts keep their OFL lice
 
 **Correrlo:** `npx serve .` o `python3 -m http.server 8000` y abre `localhost`.
 
-**Créditos:** diseño, simulaciones, sonido y código de **casiangel333** (HermannPR). *Señal* es un homenaje a Hydra de Olivia Jack, con implementación propia. Panel con lil-gui (MIT). Tipografías STIX Two Text y Geist Mono (SIL OFL 1.1).
+**Créditos:** diseño, simulaciones, sonido y código de **casiangel333** (HermannPR). *Señal* es un homenaje a Hydra de Olivia Jack, con implementación propia. Panel con lil-gui (MIT). Presets de Señal de terceros, cada uno con su crédito en pantalla: MilkDrop de sus autores vía butterchurn-presets y butterchurn de Jordan Berg (MIT), ISF de VIDVOX y modV (MIT), WGSL de fosfora de Kevin Raymond (MIT o Apache-2.0). Tipografías STIX Two Text y Geist Mono (SIL OFL 1.1).
 
 **Licencia:** código MIT © 2026 casiangel333 (HermannPR). Las fuentes conservan su licencia OFL.

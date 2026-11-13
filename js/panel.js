@@ -4,6 +4,7 @@
 // y la tinta de la galería; el armazón, la forma de onda y la zona para soltar canciones son propios.
 import GUI from './vendor/lil-gui.esm.min.js';
 import { MARCA } from './salas.js';
+import { COLECCIONES, NOMBRE_COL } from './motores/catalogo.js';
 
 const $ = (id) => document.getElementById(id);
 const CLAVE = 'umbral.panel';
@@ -43,6 +44,7 @@ export class Panel {
         </div>
       </nav>
       <div class="pn-cuerpo" id="pn-cuerpo">
+        <section id="pn-presets"></section>
         <section id="pn-musica"></section>
         <section id="pn-sala"></section>
         <section id="pn-vista"></section>
@@ -65,7 +67,7 @@ export class Panel {
     this.armarFijas();
     this.aplicar(false);
   }
-  soltarFoco(t) { if (t && t.matches && !t.matches('input[type=text], input[type=number]')) setTimeout(() => t.blur(), 0); }
+  soltarFoco(t) { if (t && t.matches && !t.matches('input[type=text], input[type=number], input[type=search], .pp-lista, .pp-lista *')) setTimeout(() => t.blur(), 0); }
   guardar() { try { localStorage.setItem(CLAVE, JSON.stringify({ abierto: this.abierto, secciones: this.pref.secciones, v: 2 })); } catch {} }
   aplicar(guardar = true) {
     document.body.classList.toggle('panel-abierto', this.abierto);
@@ -87,7 +89,7 @@ export class Panel {
 
   seccion(id, titulo, clave) {
     const g = new GUI({ container: $(id), title: titulo, autoPlace: false });
-    if (!this.pref.secciones[clave]) g.close();
+    if (!(this.pref.secciones[clave] ?? clave === 'presets')) g.close();
     g.onOpenClose((x) => { if (x !== g) return; this.pref.secciones[clave] = !g._closed; this.guardar(); });
     this.guis[clave] = g;
     return g;
@@ -162,7 +164,8 @@ export class Panel {
   sala({ num, acto, nombre, D, slug }) {
     $('pn-num').textContent = `Nº ${num} · ${acto}`;
     $('pn-nombre').textContent = nombre;
-    for (const k of ['sala', 'musica']) { if (this.guis[k]) { this.guis[k].destroy(); delete this.guis[k]; } }
+    for (const k of ['sala', 'musica', 'presets']) { if (this.guis[k]) { this.guis[k].destroy(); delete this.guis[k]; } }
+    if (this.quitarCat) { this.quitarCat(); this.quitarCat = null; }
     this.selFormato = this.btnCancion = this.onda = null; this.valImg = this.senalRef = null;
     if (this.quitarOyente) { this.quitarOyente(); this.quitarOyente = null; }
     const A = this.acc, c = (D && D.controls) || {};
@@ -177,7 +180,78 @@ export class Panel {
     const ult = caja.lastElementChild; if (caja.children.length % 2 === 0 && ult && !ult.classList.contains('ancho')) ult.classList.add('ancho');
     caja.addEventListener('click', (e) => { const t = e.target.closest('button[data-b]'); if (t) A.pulsar(t.dataset.b); });
     g.$children.appendChild(caja);
-    if (slug === 'senal') this.armarMusica();
+    if (slug === 'senal') { this.armarPresets(); this.armarMusica(); }
+  }
+
+  // presets de todos los motores: buscar, filtrar por colección, favoritos, al azar y una capa de efecto encima
+  armarPresets() {
+    const s = this.acc.senal && this.acc.senal();
+    if (!s || !s.cat) return;
+    const C = s.cat, g = this.seccion('pn-presets', 'Presets', 'presets');
+    const caja = document.createElement('div'); caja.className = 'pp';
+    caja.innerHTML = `
+      <div class="pp-actual"><div class="pp-n"></div><div class="pp-a"></div></div>
+      <div class="pp-nav">
+        <button type="button" data-p="ant" title="Preset anterior (←)" aria-label="Preset anterior">‹</button>
+        <button type="button" data-p="azar" title="Uno al azar de la lista">al azar</button>
+        <button type="button" data-p="fav" class="pp-fav" title="Guardar en favoritos" aria-pressed="false">☆ favorito</button>
+        <button type="button" data-p="sig" title="Preset siguiente (→ o C)" aria-label="Preset siguiente">›</button>
+      </div>
+      <div class="pp-filtro">
+        <input type="search" class="pp-q" placeholder="buscar nombre, autor, audio…" aria-label="Buscar presets" spellcheck="false" autocomplete="off">
+        <select class="pp-c" aria-label="Colección">${COLECCIONES.map((x) => `<option value="${x.c}">${esc(x.n)}</option>`).join('')}</select>
+      </div>
+      <div class="pp-lista" role="listbox" aria-label="Presets"></div>
+      <div class="pp-cuenta"></div>
+      <label class="pp-capa"><span>capa de efecto</span><select class="pp-fx" aria-label="Capa de efecto encima del preset"></select></label>
+      <div class="pp-nota">MilkDrop (butterchurn), ISF (Vidvox, modV) y fosfora son de sus autores, con licencia MIT o Apache-2.0; el nombre y el autor de cada uno salen arriba y en la sala.</div>`;
+    g.$children.appendChild(caja);
+    const q = (x) => caja.querySelector(x), lista = q('.pp-lista'), busca = q('.pp-q'), col = q('.pp-c'), fx = q('.pp-fx');
+    busca.value = C.estado.q || ''; col.value = C.estado.c || 'todas';
+    const MAX = 300;
+    // solo se mueve la lista, no el panel entero (scrollIntoView arrastraría también al panel)
+    const verEnLista = (b) => {
+      if (!b) return;
+      const y = b.offsetTop, h = b.offsetHeight, v = lista.scrollTop, H = lista.clientHeight;
+      if (y < v) lista.scrollTop = y; else if (y + h > v + H) lista.scrollTop = y + h - H;
+    };
+    let pintadaFx = -1;
+    const pintarLista = () => {
+      const L = C.lista, act = s.sel && s.sel.id;
+      lista.innerHTML = L.slice(0, MAX).map((x) => `<button type="button" role="option" data-id="${esc(x.id)}" class="${x.id === act ? 'on' : ''}" aria-selected="${x.id === act}">`
+        + `<span class="pl-n">${C.favs.has(x.id) ? '★ ' : ''}${esc(x.n)}</span><span class="pl-a">${esc(x.a)} · ${esc((NOMBRE_COL[x.c] || x.c).split(' · ')[0])}</span></button>`).join('');
+      q('.pp-cuenta').textContent = !C.listo ? 'cargando el catálogo…' : L.length > MAX ? `${MAX} de ${L.length.toLocaleString('es-ES')} · escribe para acotar` : `${L.length.toLocaleString('es-ES')} preset${L.length === 1 ? '' : 's'}`;
+      verEnLista(lista.querySelector('.on'));
+    };
+    const pintarActual = () => {
+      const e = s.sel;
+      q('.pp-n').textContent = e ? e.n : '—';
+      q('.pp-a').textContent = e ? `${e.a} · ${NOMBRE_COL[e.c] || e.c} · ${e.l}` : '';
+      const f = e && C.favs.has(e.id), b = q('.pp-fav');
+      b.textContent = f ? '★ favorito' : '☆ favorito'; b.setAttribute('aria-pressed', String(!!f)); b.classList.toggle('on', !!f);
+      lista.querySelectorAll('button.on').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-selected', 'false'); });
+      const b2 = e && lista.querySelector(`button[data-id="${CSS.escape(e.id)}"]`);
+      if (b2) { b2.classList.add('on'); b2.setAttribute('aria-selected', 'true'); verEnLista(b2); }
+      if (C.fxs.length !== pintadaFx) { pintadaFx = C.fxs.length; fx.innerHTML = '<option value="">ninguna</option>' + C.fxs.map((x) => `<option value="${esc(x.id)}">${esc(x.n)}</option>`).join(''); }
+      fx.value = s.capaSel ? s.capaSel.id : '';
+      fx.title = s.capaSel && !s.capaAplica ? 'La capa se aplica a UMBRAL, ISF y MilkDrop' : 'Un filtro ISF encima del preset';
+    };
+    let filas = C.lista;
+    const todo = () => { if (filas !== C.lista) { filas = C.lista; pintarLista(); } pintarActual(); };
+    let tq = 0;
+    busca.addEventListener('input', () => { clearTimeout(tq); tq = setTimeout(() => { C.filtrar(col.value, busca.value); todo(); }, 120); });
+    busca.addEventListener('keydown', (e) => { if (e.key === 'Enter') { const p = C.lista[0]; if (p) s.elegir(p); } });
+    col.addEventListener('change', () => { C.filtrar(col.value, busca.value); todo(); });
+    fx.addEventListener('change', () => s.capa(fx.value || null));
+    lista.addEventListener('click', (e) => { const b = e.target.closest('button[data-id]'); if (b) s.elegir(C.porId.get(b.dataset.id)); });
+    caja.querySelector('.pp-nav').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-p]'); if (!b) return;
+      const a = b.dataset.p;
+      if (a === 'ant') s.saltarA(-1); else if (a === 'sig') s.saltarA(1); else if (a === 'azar') s.saltarA(1, true);
+      else if (a === 'fav' && s.sel) { C.fav(s.sel.id); filas = null; todo(); s.codigo(); }
+    });
+    this.quitarCat = C.alCambiar(todo);
+    pintarLista(); pintarActual();
   }
 
   armarMusica() {
@@ -225,10 +299,9 @@ export class Panel {
     const s = A.senal && A.senal();
     if (s && s.opciones) {
       const o = s.opciones(), im = g.addFolder('Imagen');
-      const val = { look: o.looks[o.look], parche: o.parches[o.parche], tintas: o.tintas[o.tinta] };
+      const val = { look: o.looks[o.look], tintas: o.tintas[o.tinta] };
       this.cImg = {
         look: im.add(val, 'look', o.looks).name('carácter').onChange((v) => s.fijar('look', o.looks.indexOf(v))),
-        parche: im.add(val, 'parche', o.parches).name('parche').onChange((v) => s.fijar('parche', o.parches.indexOf(v))),
         tintas: im.add(val, 'tintas', o.tintas).name('tintas').onChange((v) => s.fijar('tintas', o.tintas.indexOf(v))),
       };
       this.valImg = val; this.senalRef = s;
@@ -284,7 +357,7 @@ export class Panel {
     const P = this.acc.pista, c = this.onda;
     if (this.valImg && this.senalRef) {
       const o = this.senalRef.opciones();
-      for (const [k, i, L] of [['look', o.look, o.looks], ['parche', o.parche, o.parches], ['tintas', o.tinta, o.tintas]]) {
+      for (const [k, i, L] of [['look', o.look, o.looks], ['tintas', o.tinta, o.tintas]]) {
         if (this.valImg[k] !== L[i]) { this.valImg[k] = L[i]; this.cImg[k].updateDisplay(); }
       }
     }
