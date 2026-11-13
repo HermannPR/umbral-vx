@@ -310,7 +310,7 @@ async function entrar(i, primera = false, op = {}) {
   document.documentElement.style.setProperty('--acento', S.acento);
   // pausa: una sala nueva siempre arranca andando (y con sonido, aunque la anterior estuviera en pausa)
   if (!sil) {
-    pausaSala = false; mostrarPausa();
+    pausaSala = false; mostrarPausa(); if (panel) panel.pintarBarra(true);
     if (sonido.pausado && !pausado) sonido.reanudar();
     sonido.partitura(S.slug);
     pista.enSala(S.slug === 'senal');
@@ -405,7 +405,7 @@ function cambiarModo(dir) {
   refrescarLeyenda();
 }
 function alternarPausaSala() {
-  pausaSala = !pausaSala; mostrarPausa();
+  pausaSala = !pausaSala; mostrarPausa(); if (panel) panel.pintarBarra(true);
   if (pausaSala) sonido.pausar(); else { sonido.reanudar(); last = performance.now(); }
   log({ type: 'pausa-sala', on: pausaSala });
 }
@@ -583,6 +583,7 @@ function accPanel() {
     pantallaCompleta, captura, copiarEnlace, escenario,
     formatos: Object.keys(FORMATOS), formato: (x) => fijarFormato(x),
     grabar, grabarCancion, grabando: () => grabadora.activa, puedeGrabar: puedeGrabar(),
+    segundosRec: () => grabadora.segundos, pausada: () => pausaSala && modo === 'sala',
     ocultarTodo: alternarTexto,
     antesala: () => abrirAntesala(),
     sonido: (x) => { if (x === sonido.mudo) sonido.alternarMudo(); antesala && antesala.actualizar(estado()); },
