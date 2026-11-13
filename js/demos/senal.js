@@ -61,9 +61,20 @@ const PARCHES = [
 const COLOR = ['fijas', 'tonalidad', 'cada drop', 'cada compás', 'arcoíris'];
 const ESCENAS = ['manual', 'en cada drop', 'por sección', 'cada 8 compases', 'cada 16 compases'];
 const ESPEJO = ['no', 'horizontal', 'cuatro'];
-const FX_BASE = { color: 'tonalidad', escenas: 'manual', osciloscopio: true, barrido: 0, zoom: 0.5, espejo: 'no', mosh: 0, estrobo: false };
+const FX_BASE = { color: 'tonalidad', escenas: 'manual', osciloscopio: true, capas: true, barrido: 0, zoom: 0.5, espejo: 'no', mosh: 0, estrobo: false };
 const CLAVE_FX = 'umbral.senal';
 const TAU = Math.PI * 2;
+// el osciloscopio y las chispas cambian con cada preset (semilla = su id) y leen su imagen
+const FORMAS = ['línea', 'vertical', 'círculo', 'espejo'];
+const azarDe = (txt) => {
+  let a = 2166136261; for (const ch of String(txt)) { a ^= ch.charCodeAt(0); a = Math.imul(a, 16777619); }
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+};
+function capasDe(e) {
+  const r = azarDe(e ? e.id : 'senal/0');
+  // MilkDrop ya dibuja su propia onda: la nuestra va tenue para no duplicarla
+  return { forma: Math.floor(r() * FORMAS.length), radio: 0.2 + r() * 0.16, mezcla: 0.6 + r() * 0.35, flujo: 0.4 + r() * 0.9, origen: r() < 0.65 ? 1 : 0, scope: e && e.m === 'md' ? 0.4 : 1 };
+}
 // gira el matiz conservando la luminancia (rotación en el plano I-Q de YIQ)
 const escH = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 function girar(c, a) {
@@ -246,12 +257,14 @@ struct CU {
   e: vec4f,  // bombeo, apagón (hueco antes del drop), grosor de línea (px), giro de matiz (presets de otros motores)
   f: vec4f,  // barrido (líneas), zoom radial, espejo (0 no, 1 horizontal, 2 cuatro), _
   g: vec4f,  // fracción de la fuente anterior (x, y), mezcla (1 = solo la nueva), _
+  h: vec4f,  // forma del osciloscopio (0 línea, 1 vertical, 2 círculo, 3 espejo), radio, color de la imagen (0..1), intensidad
   onda: array<vec4f, 64>,
 };
 @group(0) @binding(0) var<uniform> cu: CU;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var smp: sampler;
 @group(0) @binding(3) var src2: texture_2d<f32>;
+@group(0) @binding(4) var<storage, read> dom: array<vec4f>;   // color dominante del preset: tono puro, fuerza
 // la fuente de ahora (parche, GLSL, ISF, MilkDrop o fosfora) y, mientras se funden, la anterior
 fn tomar(uv: vec2f) -> vec3f {
   let a = textureSampleLevel(src, smp, uv * cu.a.zw, 0.0).rgb;
@@ -265,6 +278,12 @@ fn matiz(c: vec3f, a: f32) -> vec3f {
   return max(vec3f(0.0), vec3f(y + 0.956 * i2 + 0.621 * q2, y - 0.272 * i2 - 0.647 * q2, y - 1.106 * i2 + 1.703 * q2));
 }
 fn h1(x: f32) -> f32 { return fract(sin(x * 91.345) * 47453.5453); }
+// el tono puro de la imagen (croma) con el brillo de la tinta; en zonas grises se queda la tinta
+fn tonoDe(c: vec3f, base: vec3f, k: f32) -> vec3f {
+  let mx = max(max(c.r, c.g), c.b); let mn = min(min(c.r, c.g), c.b); let cr = mx - mn;
+  let puro = (c - vec3f(mn)) / max(cr, 1e-3);
+  return mix(base, puro * max(max(base.r, base.g), base.b), k * smoothstep(0.04, 0.2, cr));
+}
 fn ondaEn(x: f32) -> f32 {
   let f = clamp(x, 0.0, 1.0) * 255.0; let i = u32(floor(f)); let j = min(i + 1u, 255u);
   return mix(cu.onda[i >> 2u][i & 3u], cu.onda[j >> 2u][j & 3u], fract(f));
@@ -298,12 +317,30 @@ fn ondaEn(x: f32) -> f32 {
   }
   if (abs(cu.e.w) > 0.001) { c = matiz(c, cu.e.w); }
   c *= cu.e.x * (1.0 - cu.e.y * 0.88);
-  // osciloscopio: la onda real de la mezcla cruzando la lámina
+  // osciloscopio: la onda real de la mezcla; su forma la elige el preset
   let amp = cu.d.w;
   if (amp > 0.0005) {
-    let y = 0.5 + ondaEn(i.pos.x / res.x) * amp;
-    let dpx = abs(i.pos.y / res.y - y) * res.y;
-    c += cu.d.rgb * exp(-dpx * dpx / (cu.e.z * cu.e.z)) * (0.7 + cu.e.y);
+    let fm = cu.h.x; let q = i.pos.xy / res; var dpx: f32;
+    if (fm < 0.5) { dpx = abs(q.y - 0.5 - ondaEn(q.x) * amp) * res.y; }
+    else if (fm < 1.5) { dpx = abs(q.x - 0.5 - ondaEn(q.y) * amp * res.y / res.x) * res.x; }
+    else if (fm < 2.5) {
+      let pc = (i.pos.xy - 0.5 * res) / res.y; let ang = atan2(pc.y, pc.x) / 6.2831853 + 0.5;
+      dpx = abs(length(pc) - cu.h.y - ondaEn(abs(ang * 2.0 - 1.0)) * amp * 0.7) * res.y;
+    } else {
+      let o = ondaEn(q.x) * amp * 0.7;
+      dpx = min(abs(q.y - 0.33 - o), abs(q.y - 0.67 + o)) * res.y;
+    }
+    // su color es el tono de la imagen que cruza; se mezcla (no solo se suma) para verse también sobre lo claro
+    var dc = dom[0].rgb;
+    if (abs(cu.e.w) > 0.001) { dc = matiz(dc, cu.e.w); let a0 = min(min(dc.r, dc.g), dc.b); dc = (dc - vec3f(a0)) / max(max(max(dc.r, dc.g), dc.b) - a0, 1e-3); }
+    let base = mix(cu.d.rgb, dc * max(max(cu.d.r, cu.d.g), cu.d.b), min(1.0, cu.h.z * dom[0].a * 1.6));
+    let tinta = tonoDe(c, base, cu.h.z * 0.5);
+    let gl = exp(-dpx * dpx / (cu.e.z * cu.e.z)) * (0.7 + cu.e.y) * cu.h.w;
+    if (cu.h.z > 0.001) {
+      // sobre lo claro la línea va oscura (mismo tono), sobre lo oscuro, luminosa: siempre se lee
+      let k = smoothstep(0.45, 0.75, dot(c, vec3f(0.299, 0.587, 0.114)));
+      c = mix(c, mix(tinta * 1.3, tinta * 0.12, k), min(gl, 1.0) * 0.85) + tinta * gl * 0.25 * (1.0 - k);
+    } else { c += tinta * gl; }
   }
   // barrido: líneas de monitor y una franja que sube despacio
   let sl = cu.f.x;
@@ -321,10 +358,67 @@ fn ondaEn(x: f32) -> f32 {
 // chispas: anillo de cada bombo, implosión durante la subida y estallido del drop
 const PART = /* wgsl */`
 struct P { a: vec4f, b: vec4f };   // a: posición, velocidad · b: vida, vida inicial, tamaño, tipo
-struct PU { a: vec4f, b: vec4f, c: vec4f };   // a: n, dt, t, aspecto · b: cabeza, implosión, anillo, estallido · c: wob, subida, semilla, _
+struct PU { a: vec4f, b: vec4f, c: vec4f, d: vec4f };   // a: n, dt, t, aspecto · b: cabeza, implosión, anillo, estallido · c: wob, subida, semilla, flujo · d: fracción de la fuente (x, y), origen (0 centro, 1 lo más brillante), _
 @group(0) @binding(0) var<storage, read_write> ps: array<P>;
 @group(0) @binding(1) var<uniform> pu: PU;
+@group(0) @binding(2) var src: texture_2d<f32>;
+@group(0) @binding(3) var<storage, read_write> dom: array<vec4f>;
 fn hs(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }
+// color dominante del preset: histograma de 12 tonos con 256 muestras (pesadas por saturación y brillo);
+// gana el tono que más pesa (un promedio mezclaría tonos opuestos en gris). Se suaviza entre cuadros.
+var<workgroup> bins: array<atomic<u32>, 12>;
+fn binDe(c: vec3f, mx: f32, cr: f32) -> u32 {
+  var h: f32;
+  if (mx == c.r) { h = (c.g - c.b) / cr; } else if (mx == c.g) { h = 2.0 + (c.b - c.r) / cr; } else { h = 4.0 + (c.r - c.g) / cr; }
+  return min(u32(fract(h / 6.0 + 1.0) * 12.0), 11u);
+}
+@compute @workgroup_size(64) fn dominante(@builtin(local_invocation_index) li: u32) {
+  if (li < 12u) { atomicStore(&bins[li], 0u); }
+  workgroupBarrier();
+  let dim = vec2f(textureDimensions(src));
+  for (var k = 0u; k < 16u; k++) {
+    let j = li * 16u + k;
+    let uv = (vec2f(f32(j % 32u), f32(j / 32u)) + 0.5) / 32.0;
+    let c = textureLoad(src, vec2i(uv * pu.d.xy * (dim - 1.0)), 0).rgb;
+    let mx = max(max(c.r, c.g), c.b); let cr = mx - min(min(c.r, c.g), c.b);
+    let w = smoothstep(0.1, 0.3, cr) * min(cr, 1.0);   // los grises y blancos cálidos no cuentan; lo tenue con color sí
+    if (w > 0.0) { atomicAdd(&bins[binDe(c, mx, cr)], u32(w * 1000.0)); }
+  }
+  workgroupBarrier();
+  if (li == 0u) {
+    var mejor = 0u; var bm = 0u;
+    for (var b = 0u; b < 12u; b++) { let v = atomicLoad(&bins[b]); if (v > bm) { bm = v; mejor = b; } }
+    // histéresis: el tono de ahora se queda mientras no lo supere otro por un 30 %
+    let act = u32(dom[1].x);
+    if (dom[1].y > 0.5 && act < 12u && f32(atomicLoad(&bins[act])) * 1.3 >= f32(bm)) { mejor = act; bm = atomicLoad(&bins[act]); }
+    dom[1] = vec4f(f32(mejor), 1.0, 0.0, 0.0);
+    let h = (f32(mejor) + 0.5) / 12.0;
+    let puro = clamp(abs(fract(vec3f(h) + vec3f(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+    let fuerza = clamp(f32(bm) / 1000.0 * 0.12, 0.0, 1.0);   // con unos pocos contornos de color ya manda
+    var m = select(mix(dom[0], vec4f(puro, fuerza), 0.08), vec4f(puro, fuerza), dom[0].a < 0.001 && fuerza > 0.0);
+    // al pasar de un tono a otro no se ensucia: se vuelve a saturar
+    let mn = min(min(m.r, m.g), m.b); let mx = max(max(m.r, m.g), m.b);
+    if (mx - mn > 0.05) { m = vec4f((m.rgb - vec3f(mn)) / (mx - mn), m.a); }
+    dom[0] = m;
+  }
+}
+// brillo del preset en un punto (x en ±aspecto, y en ±1)
+fn lum(q: vec2f) -> f32 {
+  let uv = vec2f(q.x / pu.a.w * 0.5 + 0.5, 0.5 - q.y * 0.5);
+  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return 0.0; }
+  let dim = vec2f(textureDimensions(src));
+  return dot(textureLoad(src, vec2i(min(uv * pu.d.xy * dim, dim - 1.0)), 0).rgb, vec3f(0.299, 0.587, 0.114));
+}
+// el punto más brillante entre unos cuantos al azar (las chispas de un mismo golpe comparten la semilla)
+fn foco() -> vec2f {
+  var mejor = vec2f(0.0); var bl = -1.0;
+  for (var k = 0; k < 12; k++) {
+    let s = pu.c.z * 0.731 + f32(k) * 17.13;
+    let q = vec2f((hs(s) * 2.0 - 1.0) * pu.a.w * 0.8, (hs(s + 5.3) * 2.0 - 1.0) * 0.8);
+    let l = lum(q); if (l > bl) { bl = l; mejor = q; }
+  }
+  return mejor;
+}
 @compute @workgroup_size(256) fn cs(@builtin(global_invocation_id) g: vec3u) {
   let n = u32(pu.a.x); let i = g.x;
   if (i >= n) { return; }
@@ -339,7 +433,8 @@ fn hs(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }
     p.a = vec4f(d * vec2f(asp, 1.0) * (1.05 + r2 * 0.4), -d * (0.5 + r3 * 0.9));
     p.b = vec4f(1.3, 1.3, 0.5 + r2 * 0.6, 0.0);
   } else if (rel < c0 + c1) {
-    p.a = vec4f(d * 0.05, d * (0.9 + r2 * 1.0));
+    let o = select(vec2f(0.0), foco(), pu.d.z > 0.5);
+    p.a = vec4f(o + d * 0.05, d * (0.9 + r2 * 1.0));
     p.b = vec4f(0.55, 0.55, 0.5 + r3 * 0.5, 1.0);
   } else if (rel < c0 + c1 + c2) {
     p.a = vec4f(d * r3 * 0.06, d * (0.4 + sqrt(r2) * 3.0));
@@ -349,6 +444,13 @@ fn hs(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }
     let giro = vec2f(-q.y, q.x) * w * 1.4;
     let ola = vec2f(sin(q.y * 7.0 + pu.a.z * 3.0), cos(q.x * 6.0 - pu.a.z * 2.0)) * w * 0.9;
     var v = p.a.zw + (giro + ola) * dt;
+    // flujo: las chispas corren a lo largo de los contornos del preset (curl de su brillo) y se pegan a lo claro
+    if (pu.c.w > 0.001) {
+      let e = 0.015;
+      let gx = lum(q + vec2f(e, 0.0)) - lum(q - vec2f(e, 0.0));
+      let gy = lum(q + vec2f(0.0, e)) - lum(q - vec2f(0.0, e));
+      v += (vec2f(-gy, gx) * 0.9 + vec2f(gx, gy) * 0.25) * (pu.c.w / e) * dt;
+    }
     v *= exp(-dt * select(2.0, 0.4, p.b.w < 0.5));
     p.a = vec4f(q + v * dt, v);
     p.b.x -= dt;
@@ -358,10 +460,17 @@ fn hs(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }
 `;
 const PART_R = /* wgsl */`
 struct P { a: vec4f, b: vec4f };
-struct RU { a: vec4f, c: vec4f, d: vec4f };   // a: aspecto, ancho, intensidad · c, d: tintas
+struct RU { a: vec4f, c: vec4f, d: vec4f, b: vec4f };   // a: aspecto, ancho, intensidad, color de la imagen · c, d: tintas rgb + fracción x / y de la fuente · b: giro de matiz, _
+fn matiz(c: vec3f, a: f32) -> vec3f {
+  let y = dot(c, vec3f(0.299, 0.587, 0.114)); let i0 = dot(c, vec3f(0.596, -0.274, -0.322)); let q0 = dot(c, vec3f(0.211, -0.523, 0.312));
+  let ca = cos(a); let sa = sin(a); let i2 = i0 * ca - q0 * sa; let q2 = i0 * sa + q0 * ca;
+  return max(vec3f(0.0), vec3f(y + 0.956 * i2 + 0.621 * q2, y - 0.272 * i2 - 0.647 * q2, y - 1.106 * i2 + 1.703 * q2));
+}
 @group(0) @binding(0) var<storage, read> ps: array<P>;
 @group(0) @binding(1) var<uniform> ru: RU;
-struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1) a: f32, @location(2) k: f32 };
+@group(0) @binding(2) var src: texture_2d<f32>;
+@group(0) @binding(3) var<storage, read> dom: array<vec4f>;
+struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1) a: f32, @location(2) col: vec3f };
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   var o: VOut;
   let p = ps[ii];
@@ -375,22 +484,35 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1
   o.uv = cc;
   let vida = clamp(p.b.x / p.b.y, 0.0, 1.0);
   o.a = vida * vida;
-  o.k = p.b.w;
+  var col = mix(ru.c.rgb, ru.d.rgb, clamp(p.b.w * 0.5, 0.0, 1.0));
+  if (ru.a.w > 0.001) {
+    var dc = dom[0].rgb;
+    if (abs(ru.b.x) > 0.001) { dc = matiz(dc, ru.b.x); let a0 = min(min(dc.r, dc.g), dc.b); dc = (dc - vec3f(a0)) / max(max(max(dc.r, dc.g), dc.b) - a0, 1e-3); }
+    col = mix(col, dc * max(max(col.r, col.g), col.b), min(1.0, ru.a.w * dom[0].a * 1.6));
+    let uv = clamp(vec2f(p.a.x / ru.a.x * 0.5 + 0.5, 0.5 - p.a.y * 0.5), vec2f(0.0), vec2f(1.0));
+    let dim = vec2f(textureDimensions(src));
+    var s = textureLoad(src, vec2i(uv * vec2f(ru.c.w, ru.d.w) * (dim - 1.0)), 0).rgb;
+    if (abs(ru.b.x) > 0.001) { s = matiz(s, ru.b.x); }
+    let mx = max(max(s.r, s.g), s.b); let mn = min(min(s.r, s.g), s.b); let cr = mx - mn;
+    let puro = (s - vec3f(mn)) / max(cr, 1e-3);
+    col = mix(col, puro * max(max(col.r, col.g), col.b), ru.a.w * smoothstep(0.04, 0.2, cr));
+  }
+  o.col = col;
   return o;
 }
 @fragment fn fs(i: VOut) -> @location(0) vec4f {
   let s = (1.0 - i.uv.y * i.uv.y) * (1.0 - smoothstep(0.2, 1.0, abs(i.uv.x)));
-  let col = mix(ru.c.rgb, ru.d.rgb, clamp(i.k * 0.5, 0.0, 1.0));
-  return vec4f(col * s * i.a * ru.a.z, 0.0);
+  return vec4f(i.col * s * i.a * ru.a.z, 0.0);
 }
 `;
 
 const fmtN = (v) => (Math.abs(v) >= 10 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2)).replace(/\.0+$/, '');
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const U_GEN = 160 + 6 * 32 + 6 * 16, U_COMP = 112 + 64 * 16;
+const U_GEN = 160 + 6 * 32 + 6 * 16, U_COMP = 128 + 64 * 16;
 
 export default class Senal {
   static palettes = DUOS.map((d) => d.nombre);
+  static teclas = [['Y', 'preset al azar']];
   static controls = { ls: '↕ elegir línea · ↔ ajustar su valor', trig: '− / + cuánto golpean los visuales', a: 'saltar al drop (o salir de él)', y: 'siguiente parche' };
   static info = { title: 'Señal', desc: '' };
   constructor(ctx) { this.ctx = ctx; this.post = { exposure: 0.92, bloom: 0.14, vignette: 0.5, lift: [0.02, 0.018, 0.015], grain: 0.04 }; this.sonido = {}; }
@@ -399,25 +521,26 @@ export default class Senal {
     // texturas internas del tamaño de la salida; la escala adaptativa dibuja solo una parte (no se realoja)
     this.tex = [0, 1].map(() => d.createTexture({ size: [W, H], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING }));
     this.vistas = this.tex.map((t) => t.createView());
-    this.u = U.uniform(d, U_GEN); this.uc = U.uniform(d, U_COMP); this.up = U.uniform(d, 48); this.ur = U.uniform(d, 48);
-    this.fu = new Float32Array(U_GEN / 4); this.fc = new Float32Array(U_COMP / 4); this.fp = new Float32Array(12); this.fr = new Float32Array(12);
+    this.u = U.uniform(d, U_GEN); this.uc = U.uniform(d, U_COMP); this.up = U.uniform(d, 64); this.ur = U.uniform(d, 64);
+    this.fu = new Float32Array(U_GEN / 4); this.fc = new Float32Array(U_COMP / 4); this.fp = new Float32Array(16); this.fr = new Float32Array(16);
     this.smp = d.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
     const m = makeShader(d, SH, 'senal', report), mc = makeShader(d, COMP, 'senal-comp', report);
     const mp = makeShader(d, PART, 'senal-chispas', report), mr = makeShader(d, PART_R, 'senal-chispas-r', report);
     const suma = { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } };
-    [this.pS, this.pC, this.pP, this.pR] = await Promise.all([
+    [this.pS, this.pC, this.pP, this.pR, this.pD] = await Promise.all([
       d.createRenderPipelineAsync({ layout: 'auto', vertex: { module: m, entryPoint: 'vs' }, fragment: { module: m, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] } }),
       d.createRenderPipelineAsync({ layout: 'auto', vertex: { module: mc, entryPoint: 'vs' }, fragment: { module: mc, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] } }),
       d.createComputePipelineAsync({ layout: 'auto', compute: { module: mp, entryPoint: 'cs' } }),
       d.createRenderPipelineAsync({ layout: 'auto', vertex: { module: mr, entryPoint: 'vs' }, fragment: { module: mr, entryPoint: 'fs', targets: [{ format: 'rgba16float', blend: suma }] } }),
+      d.createComputePipelineAsync({ layout: 'auto', compute: { module: mp, entryPoint: 'dominante' } }),
     ]);
+    this.dom = U.storage(d, 32, GPUBufferUsage.COPY_SRC);   // color dominante del preset (lo escribe la GPU)
     // chispas: el máximo depende del preset de calidad; el gobernador usa una fracción
     this.nMax = Math.max(4096, Math.round((32768 * (this.ctx.calidad ? this.ctx.calidad.carga : 1)) / 256) * 256);
     this.ps = U.storage(d, this.nMax * 32);
     this.bgS = [0, 1].map((k) => d.createBindGroup({ layout: this.pS.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.u } }, { binding: 1, resource: this.vistas[1 - k] }, { binding: 2, resource: this.smp }] }));
     this.grupos = new Map();
-    this.bgP = d.createBindGroup({ layout: this.pP.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.ps } }, { binding: 1, resource: { buffer: this.up } }] });
-    this.bgR = d.createBindGroup({ layout: this.pR.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.ps } }, { binding: 1, resource: { buffer: this.ur } }] });
+    this.gruposP = new Map();   // chispas: un par de grupos (simular, dibujar) por cada vista de fuente
     this.lado = 0; this.reac = 1; this.linea = 0; this.ultNav = 0; this.t0 = performance.now(); this.edad = 0;
     // gobernador: nivel 0..1 → resolución interna 42..100 % y chispas 15..100 %
     this.nivel = 0.85; this.nivelObj = 0.85; this.sobre = 0; this.holgura = 0; this.enfr = 0; this.lento = 0;
@@ -448,8 +571,10 @@ export default class Senal {
     const yo = this;
     window.__senal = {
       estilos: SENAL_ESTILOS.map((e) => e.nombre),
-      estado: () => { const A = yo.A || {}; return { estilo: SENAL_ESTILOS[yo.estiloI].nombre, parche: yo.P.nombre, audio: { real: !!A.real, estilo: A.estilo, seccion: A.seccion, adelanto: A.adelanto, tKick: A.tKick, tv: A.tv }, nivel: yo.nivel, esc: yo.esc, chispas: yo.nAct, frac: yo.fracPrev }; },
+      estado: () => { const A = yo.A || {}; return { estilo: SENAL_ESTILOS[yo.estiloI].nombre, parche: yo.P.nombre, audio: { real: !!A.real, estilo: A.estilo, seccion: A.seccion, adelanto: A.adelanto, tKick: A.tKick, tv: A.tv }, nivel: yo.nivel, esc: yo.esc, chispas: yo.nAct, frac: yo.fracPrev, capas: { ...yo.capas, forma: FORMAS[yo.capas.forma] } }; },
       lento: (ms) => { yo.lento = ms; },
+      // color dominante que calculó la GPU (para pruebas)
+      dominante: async () => { const dv = yo.ctx.device, b = dv.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }); const e = dv.createCommandEncoder(); e.copyBufferToBuffer(yo.dom, 0, b, 0, 16); dv.queue.submit([e.finish()]); await b.mapAsync(GPUMapMode.READ); const v = [...new Float32Array(b.getMappedRange())]; b.destroy(); return v; },
       _yo: yo,
     };
   }
@@ -551,8 +676,27 @@ export default class Senal {
   grupoC(a, b) {
     let m = this.grupos.get(a); if (!m) this.grupos.set(a, (m = new Map()));
     let g = m.get(b);
-    if (!g) { g = this.ctx.device.createBindGroup({ layout: this.pC.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uc } }, { binding: 1, resource: a }, { binding: 2, resource: this.smp }, { binding: 3, resource: b }] }); m.set(b, g); }
+    if (!g) { g = this.ctx.device.createBindGroup({ layout: this.pC.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uc } }, { binding: 1, resource: a }, { binding: 2, resource: this.smp }, { binding: 3, resource: b }, { binding: 4, resource: { buffer: this.dom } }] }); m.set(b, g); }
     return g;
+  }
+  // las chispas leen la imagen del preset: sus grupos dependen de la vista de la fuente
+  grupoP(v) {
+    let g = this.gruposP.get(v);
+    if (!g) {
+      const d = this.ctx.device;
+      if (this.gruposP.size > 24) this.gruposP.clear();
+      g = [d.createBindGroup({ layout: this.pP.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.ps } }, { binding: 1, resource: { buffer: this.up } }, { binding: 2, resource: v }] }),
+        d.createBindGroup({ layout: this.pR.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.ps } }, { binding: 1, resource: { buffer: this.ur } }, { binding: 2, resource: v }, { binding: 3, resource: { buffer: this.dom } }] }),
+        d.createBindGroup({ layout: this.pD.getBindGroupLayout(0), entries: [{ binding: 1, resource: { buffer: this.up } }, { binding: 2, resource: v }, { binding: 3, resource: { buffer: this.dom } }] })];
+      this.gruposP.set(v, g);
+    }
+    return g;
+  }
+  // forma, color y flujo de las capas para el preset de ahora (fijas si el panel lo pide)
+  get capas() {
+    if (!this.fx.capas) return { forma: 0, radio: 0.28, mezcla: 0, flujo: 0, origen: 0, scope: 1 };
+    if (this.capasSel !== this.sel || !this.capasC) { this.capasSel = this.sel; this.capasC = capasDe(this.sel); }
+    return this.capasC;
   }
   get conPista() { return !!(this.pista && this.pista.activa); }
   // lo que el panel puede elegir: carácter (cómo golpea), parche y tintas
@@ -567,6 +711,7 @@ export default class Senal {
     if (k === 'color' && v === 'fijas') this.hueObj = Math.round(this.hue / TAU) * TAU;
     this.codigo();
   }
+  onKey(k) { if (k === 'y') this.saltarA(1, true); }
   // cambio de escena: otro parche al azar; la retroalimentación funde el viejo con el nuevo
   cambiarEscena() { this.saltarA(1, true); }
   fijar(k, i) {
@@ -792,20 +937,12 @@ export default class Senal {
     fc.set([t, kick * V.golpe * R, caja, dropG * R], 4);
     fc.set([clamp(Math.max((dropG * dropG * 0.9 + caja * sub * 0.2) * V.destello * R, estrobo), 0, 1), inv, (0.0015 + kick * 0.007 + dropG * 0.02 + wob * enDrop * 0.004) * V.croma * R, clamp((caja * 0.8 + dropG) * V.glitch * R, 0, 1.5)], 8);
     fc.set([...D[2], F.osciloscopio ? (0.05 + 0.1 * enDrop + 0.04 * sub) / Math.max(0.25, amp) * 0.5 : 0], 12);
-    fc.set([1 + kick * 0.22 * V.golpe * R, hueco, (1.1 + dropG * 3 + kick) * (H / 1000), 0], 16);
+    fc.set([1 + kick * 0.22 * V.golpe * R, hueco, ((F.capas ? 1.6 : 1.1) + dropG * 3 + kick) * (H / 1000), 0], 16);
     fc.set([F.barrido, clamp(F.zoom * (kick * 0.12 * V.golpe + dropG * 0.3 + sub * sub * 0.08) * R, 0, 0.5), ESPEJO.indexOf(F.espejo), 0], 20);
-    fc.set(this.onda, 28);
+    const CP = this.capas;
+    fc.set([CP.forma, CP.radio, CP.mezcla, CP.scope], 28);
+    fc.set(this.onda, 32);
 
-    // ---- chispas ----
-    const fp = this.fp;
-    fp.set([n, dt, t, W / H, this.cabeza % n, c0, c1, c2, wob * (0.3 + enDrop), sub, (this.semilla = (this.semilla + 17.31) % 1000), 0]);
-    d.queue.writeBuffer(this.up, 0, fp);
-    this.cabeza = (this.cabeza + c0 + c1 + c2) % n;
-    const fr = this.fr;
-    fr.set([W / H, 0.0024, 0.55 * (0.6 + R * 0.4), 0, ...D[1], 0, ...D[2], 0]);
-    d.queue.writeBuffer(this.ur, 0, fr);
-
-    const cp = this.ctx.cpass(enc); cp.setPipeline(this.pP); cp.setBindGroup(0, this.bgP); cp.dispatchWorkgroups(Math.ceil(n / 256)); cp.end();
     let fuente;
     if (ext) fuente = this.dibujarMotor(enc, ext, { kick: Math.min(1.5, kick * R), caja, drop, sub, hue: this.hue }, A, dt, iw, ih);
     if (!fuente) {
@@ -817,6 +954,17 @@ export default class Senal {
       fuente = { vista: this.vistas[k], frac };
     }
     this.fuente = fuente;
+    // ---- chispas: después de la fuente, porque leen su imagen ----
+    const [gP, gR, gD] = this.grupoP(fuente.vista), ff = fuente.frac;
+    const fp = this.fp;
+    fp.set([n, dt, t, W / H, this.cabeza % n, c0, c1, c2, wob * (0.3 + enDrop), sub, (this.semilla = (this.semilla + 17.31) % 1000), CP.flujo, ff[0], ff[1], CP.origen, 0]);
+    d.queue.writeBuffer(this.up, 0, fp);
+    this.cabeza = (this.cabeza + c0 + c1 + c2) % n;
+    const fr = this.fr;
+    fr.set([W / H, 0.0024, 0.55 * (0.6 + R * 0.4), CP.mezcla, ...D[1], ff[0], ...D[2], ff[1], 0, 0, 0, 0]);
+    const cp = this.ctx.cpass(enc);
+    cp.setPipeline(this.pD); cp.setBindGroup(0, gD); cp.dispatchWorkgroups(1);
+    cp.setPipeline(this.pP); cp.setBindGroup(0, gP); cp.dispatchWorkgroups(Math.ceil(n / 256)); cp.end();
     // fundido desde la fuente anterior (otro motor): se queda quieta y se desvanece
     if (this.fuenteAnt) { this.mezclaF = Math.min(1, this.mezclaF + dt / 1.1); if (this.mezclaF >= 1) this.fuenteAnt = null; }
     const ant = this.fuenteAnt, mz = this.mezclaF * this.mezclaF * (3 - 2 * this.mezclaF);
@@ -825,9 +973,10 @@ export default class Senal {
     // el color de los presets ajenos gira desde su color original cuando la sala cambia de matiz (salvo los que ya leen uHue)
     fc[19] = ext && this.motorAct !== 'gl' && F.color !== 'fijas' ? this.hue - this.hue0 : ext && this.motorAct === 'gl' && this.sel && this.sel.m === 'isf' && F.color !== 'fijas' ? this.hue - this.hue0 : 0;
     d.queue.writeBuffer(this.uc, 0, fc);
+    this.fr[12] = fc[19]; d.queue.writeBuffer(this.ur, 0, this.fr);
     const rc = this.ctx.rpass(enc, { colorAttachments: [{ view: this.ctx.post.hdrView, loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
     rc.setPipeline(this.pC); rc.setBindGroup(0, this.grupoC(fuente.vista, ant ? ant.vista : fuente.vista)); rc.draw(3);
-    rc.setPipeline(this.pR); rc.setBindGroup(0, this.bgR); rc.draw(6, n); rc.end();
+    rc.setPipeline(this.pR); rc.setBindGroup(0, gR); rc.draw(6, n); rc.end();
 
     this.post.bloom = 0.14 + kick * 0.12 * V.golpe + drop * 0.3 * V.destello;
     this.post.exposure = 0.92 + dropG * 0.15;

@@ -193,7 +193,7 @@ export class Panel {
       <div class="pp-actual"><div class="pp-n"></div><div class="pp-a"></div></div>
       <div class="pp-nav">
         <button type="button" data-p="ant" title="Preset anterior (←)" aria-label="Preset anterior">‹</button>
-        <button type="button" data-p="azar" title="Uno al azar de la lista">al azar</button>
+        <button type="button" data-p="azar" title="Uno al azar de la lista (Y)">al azar <kbd>Y</kbd></button>
         <button type="button" data-p="fav" class="pp-fav" title="Guardar en favoritos" aria-pressed="false">☆ favorito</button>
         <button type="button" data-p="sig" title="Preset siguiente (→ o C)" aria-label="Preset siguiente">›</button>
       </div>
@@ -311,6 +311,7 @@ export class Panel {
       im.add(F, 'escenas', o.escenas).name('escenas').onChange((v) => s.efecto('escenas', v));
       const fx = g.addFolder('Efectos');
       fx.add(F, 'osciloscopio').name('osciloscopio').onChange((v) => s.efecto('osciloscopio', v));
+      fx.add(F, 'capas').name('onda y chispas siguen al preset').onChange((v) => s.efecto('capas', v));
       fx.add(F, 'zoom', 0, 1, 0.05).name('zoom radial en golpes').onChange((v) => s.efecto('zoom', v));
       fx.add(F, 'barrido', 0, 1, 0.05).name('líneas de monitor').onChange((v) => s.efecto('barrido', v));
       fx.add(F, 'mosh', 0, 1, 0.05).name('datamosh').onChange((v) => s.efecto('mosh', v));

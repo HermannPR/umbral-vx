@@ -401,6 +401,7 @@ details.pm-nota[open] summary::before { content: '− '; }
 .pp-nav button { cursor: pointer; padding: 0 6px; transition: background .15s, border-color .15s; }
 .pp-nav button:hover, .pp-nav button:focus-visible { background: rgba(236, 230, 218, .1); border-color: var(--papel-3); outline: none; }
 .pp-nav button[data-p=ant], .pp-nav button[data-p=sig] { font-size: 16px; line-height: 1; }
+.pp-nav kbd { margin-left: 6px; padding: 2px 4px; border: 1px solid var(--papel-4); border-radius: 3px; font: 400 9px/1 var(--mono); color: var(--papel-3); letter-spacing: 0; }
 .pp-fav.on { color: var(--acento); border-color: var(--acento); }
 .pp-filtro { display: grid; grid-template-columns: 1fr 132px; gap: 6px; }
 .pp input, .pp select { padding: 0 8px; min-width: 0; outline: none; }

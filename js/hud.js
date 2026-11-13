@@ -27,6 +27,7 @@ export function leyenda(D, pad, modo) {
   add(glifo('l2', pad) + glifo('r2', pad), c.trig, 'sala');
   if (D.palettes) add(glifo('x', pad), 'paleta', 'sala');
   if (c.y !== null) add(glifo('y', pad), c.y || 'modo caos', 'sala');
+  if (!pad) for (const [k, t] of D.teclas || []) add(`<span class="g">${k}</span>`, t, 'sala');
   if (!pad) {
     filas.push('<div class="sep"></div><div class="sep"></div>');
     const g = (t) => `<span class="g">${t}</span>`;
