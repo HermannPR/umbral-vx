@@ -418,3 +418,31 @@ details.pm-nota[open] summary::before { content: '− '; }
 .pp-capa { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; }
 .pp-capa span { color: var(--papel-2); }
 .pp-nota { font-size: 9.5px; line-height: 1.45; color: var(--papel-3); }
+/* stems de tu canción */
+.pm-stems { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--papel-4); }
+.pm-stems select { flex: 1; height: 26px; padding: 0 6px; border: 1px solid var(--papel-4); border-radius: 3px; background: rgba(236, 230, 218, .05); color: var(--papel-2); font: inherit; font-size: 11px; }
+.pm-stems select option { background: #14120f; color: var(--papel); }
+.pm .pm-separar { color: var(--papel); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
+.pm-barra { height: 6px; margin-top: 8px; border-radius: 3px; background: rgba(236, 230, 218, .1); overflow: hidden; }
+.pm-barra i { display: block; height: 100%; width: 0; background: var(--acento); transition: width .25s linear; }
+.pm-st-prog .pm-fila { align-items: center; }
+.pm-st-txt { flex: 3; font: 400 10.5px/1.35 var(--mono); color: var(--papel-2); }
+.pm-st-fila { margin-top: 4px; }
+.pm .pm-st-fila .pm-st-on { flex: 2.2; text-align: left; }
+.pm .pm-st-fila .pm-st-on.on { color: var(--papel); border-color: color-mix(in srgb, var(--acento) 45%, transparent); }
+.pm .pm-st-fila .pm-st-on:not(.on) { opacity: .55; }
+.pm-st-porstem { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--papel-2); cursor: pointer; }
+.pm-st-nota { margin-top: 6px; font-size: 10.5px; line-height: 1.4; color: var(--papel-3); }
+.pm .pm-st-nota .pm-st-borrar { flex: none; height: 20px; padding: 0 6px; margin-left: 4px; font-size: 10px; }
+.pm-st-ruta { display: grid; gap: 4px; margin-top: 6px; }
+.pm-st-ruta label { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--papel-2); }
+.pm-st-ruta select { flex: 0 0 52%; }
+
+/* En vivo: modo rave, proyector, tramos, MIDI y TouchDesigner (js/panel-vivo.js) */
+body.rave, body.rave canvas { cursor: none; }
+.pv details { margin: 6px 0; }
+.pv summary { cursor: pointer; opacity: .85; }
+.pv label { display: block; margin: 4px 0; }
+.pv-rol .pv-nom { display: inline-block; width: 3.6em; }
+.pv-nivel { display: inline-block; width: 60px; height: 6px; background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; vertical-align: middle; margin-left: 6px; }
+.pv-nivel i { display: block; height: 100%; width: 0; background: currentColor; transition: width .08s linear; }

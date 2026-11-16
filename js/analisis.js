@@ -70,7 +70,7 @@ function mediaMovil(x, r) {
 function cuantil(x, q) { const s = Float32Array.from(x).sort(); return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : 0; }
 
 // picos de una curva de flujo: máximo local, sobre media + k·desviación de ±0.5 s, con periodo refractario
-function picos(f, fps, k, refr, off) {
+export function picos(f, fps, k, refr, off) {
   const r = Math.round(fps * 0.5), m = mediaMovil(f, r), f2 = new Float32Array(f.length);
   for (let i = 0; i < f.length; i++) f2[i] = f[i] * f[i];
   const m2 = mediaMovil(f2, r), t = [], s = [];

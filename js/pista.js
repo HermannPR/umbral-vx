@@ -11,28 +11,43 @@
 // mapa está listo, el estado sale de él en el instante exacto que se oye (golpes en el pulso, la subida sabe
 // cuándo llega el drop, la tonalidad compás por compás). Mientras tanto, y con el micrófono, manda el análisis vivo.
 // La salida tiene la misma forma que estado() de la máquina de Señal: la sala no distingue una de otra.
-import { analizar, ultimo, tonalidad, quinta, nombreTono } from './analisis.js';
+import { analizar, picos, ultimo, tonalidad, quinta, nombreTono } from './analisis.js';
+import { Stems } from './stems.js';
+import { Vivo } from './vivo.js';
+import { EntradaMidi } from './midi.js';
+import { SalidaTD } from './salida-td.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const reducido = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const CLAVE = 'umbral.pista';
 const BANDAS = [[30, 150], [150, 2000], [2000, 12000]];
 const HIST = 90;                 // ~1.5 s de flujo a 60 fps
 
-export const AJUSTES_BASE = { sensibilidad: 1, suavizado: 0.5, graves: 1, medios: 1, agudos: 1, volumen: 0.85, bucle: true, destellos: !reducido };
+// qué stem mueve cada visual de Señal (con stems): golpe (graves y golpes), torsión (medios), chispas (agudos y cortes)
+export const RUTA_BASE = { golpe: 'bateria', torsion: 'voz', chispas: 'otros' };
+export const FUENTES_RUTA = { bateria: 'batería', bajo: 'bajo', voz: 'voz', otros: 'otros', mezcla: 'la canción' };
+export const AJUSTES_BASE = { sensibilidad: 1, suavizado: 0.5, graves: 1, medios: 1, agudos: 1, volumen: 0.85, bucle: true, destellos: !reducido, porStem: true };
 
 export class Pista {
   constructor(sonido) {
     this.S = sonido;
     this.ajustes = { ...AJUSTES_BASE };
     try { Object.assign(this.ajustes, JSON.parse(localStorage.getItem(CLAVE) || '{}')); } catch {}
-    this.fuente = null;          // 'archivo' | 'mic' | null
+    this.fuente = null;          // 'archivo' | 'mic' | 'midi' | null
     this.nombre = ''; this.buffer = null; this.dur = 0; this.offset = 0; this.t0 = 0; this.sonando = false; this.nodo = null;
     this.picos = null; this.bpm = 0; this.enSalaSenal = false; this.seguir = false;
     this.mapa = null; this.analizando = null; this.tempo = 1; this.sinBucle = false; this.alTerminar = null;
     this.oyentes = new Set();
     this.reiniciarAnalisis();
+    // stems: voz, batería, bajo y otros (stems.js); se avisan como cambios de la pista
+    this.stems = new Stems(this);
+    this.stems.alCambiar(() => this.avisar());
+    // en vivo (mic o MIDI): BPM, fase, retardo y novedad · entrada MIDI · salida de datos a TouchDesigner
+    this.vivo = new Vivo(this);
+    this.midi = new EntradaMidi();
+    this.salida = new SalidaTD();
   }
   get activa() { return !!this.fuente; }
+  get enVivo() { return this.fuente === 'mic' || this.fuente === 'midi'; }   // sin mapa: manda vivo.js
   alCambiar(f) { this.oyentes.add(f); return () => this.oyentes.delete(f); }
   avisar() { for (const f of this.oyentes) { try { f(this); } catch {} } }
   guardar() { try { localStorage.setItem(CLAVE, JSON.stringify(this.ajustes)); } catch {} }
@@ -72,7 +87,7 @@ export class Pista {
       const datos = await file.arrayBuffer();
       const buf = await this.S.ac.decodeAudioData(datos);
       this.quitar(false);
-      this.buffer = buf; this.dur = buf.duration; this.nombre = file.name.replace(/\.[^.]+$/, '');
+      this.buffer = buf; this.dur = buf.duration; this.nombre = file.name.replace(/\.[^.]+$/, ''); this.archivo = file;
       this.fuente = 'archivo'; this.offset = 0;
       this.picos = picosDe(buf, 720);
       this.bpm = bpmDe(buf);
@@ -93,6 +108,7 @@ export class Pista {
       if (!m || this.buffer !== buf) return;
       this.mapa = m; this.analizando = null; this.bpm = Math.round(m.bpm);
       this.avisar();
+      if (this.stems.hay) this.stemsListos();
     }).catch((e) => { this.analizando = null; console.warn('análisis', e); this.avisar(); });
   }
   // el tempo puede salir al doble o a la mitad: ×2 / ÷2 lo corrigen a mano
@@ -114,13 +130,26 @@ export class Pista {
     this.avisar();
   }
 
-  quitar(avisar = true) {
+  // MIDI en lugar del micrófono: CC de FL Studio (Peak Controller → MIDI Out → bus IAC)
+  async usarMidi(puerto) {
+    this.asegurar();
+    const p = await this.midi.abrir(puerto);
+    this.quitar(false, false);   // el puerto recién abierto se queda (antes, al cambiar de puerto, se cerraba)
+    this.fuente = 'midi'; this.nombre = 'MIDI · ' + p.nombre; this.bpm = 0; this.picos = null; this.sonando = true;
+    this.reiniciarAnalisis();
+    this.S.generativa(false);
+    this.avisar();
+  }
+
+  quitar(avisar = true, cerrarMidi = true) {
     this.parar();
+    if (this.fuente === 'midi' && cerrarMidi) this.midi.cerrar(false);
     if (this.mic) { try { this.mic.disconnect(); } catch {} this.mic = null; }
     if (this.stream) { this.stream.getTracks().forEach((t) => t.stop()); this.stream = null; }
     const habia = !!this.fuente;
     this.fuente = null; this.buffer = null; this.picos = null; this.nombre = ''; this.dur = 0; this.offset = 0; this.sonando = false; this.bpm = 0; this.seguir = false;
-    this.mapa = null; this.analizando = null; this.tonoVivo = '';
+    this.mapa = null; this.analizando = null; this.tonoVivo = ''; this.archivo = null;
+    this.stems.limpiar();
     if (habia && this.S.ac) this.S.generativa(true);
     if (avisar) this.avisar();
   }
@@ -128,23 +157,62 @@ export class Pista {
   reproducir(desde = this.pos()) {
     if (this.fuente !== 'archivo' || !this.buffer) return;
     this.parar();
-    const ac = this.S.ac, n = ac.createBufferSource();
-    n.buffer = this.buffer; n.loop = !!this.ajustes.bucle && !this.sinBucle; n.connect(this.entrada);
+    const ac = this.S.ac, n = ac.createBufferSource(), bucle = !!this.ajustes.bucle && !this.sinBucle;
+    n.buffer = this.buffer; n.loop = bucle;
+    // con algún stem callado suena la mezcla de los stems (cada uno con su ganancia); si no, la canción tal cual
+    this.mezclaStems = this.stems.mezclaPropia;
+    if (this.mezclaStems) {
+      n.connect(this.ganStem(null, false));
+      this.extra = this.stems.lista.map((st) => {
+        const x = ac.createBufferSource(); x.buffer = st.buf; x.loop = bucle;
+        x.loopEnd = Math.min(st.buf.duration, this.dur);
+        x.connect(this.ganStem(st, st.on)); return x;
+      });
+    } else n.connect(this.entrada);
     n.onended = () => { if (this.nodo === n) { this.nodo = null; this.sonando = false; this.offset = 0; this.avisar(); if (this.alTerminar) this.alTerminar(); } };
     this.offset = clamp(desde, 0, Math.max(0, this.dur - 0.05)); this.t0 = ac.currentTime;
-    n.start(0, this.offset);
+    const cuando = ac.currentTime + (this.extra ? 0.03 : 0);
+    if (this.extra) { this.t0 = cuando; for (const x of this.extra) x.start(cuando, Math.min(this.offset, x.buffer.duration - 0.01)); }
+    n.start(cuando, this.offset);
     this.nodo = n; this.sonando = true;
     this.avisar();
   }
   pausar() { if (this.fuente !== 'archivo') return; this.offset = this.pos(); this.parar(); this.sonando = false; this.avisar(); }
   alternar() { if (this.sonando) this.pausar(); else this.reproducir(); }
   buscar(seg) { if (this.fuente !== 'archivo') return; if (this.sonando) this.reproducir(seg); else { this.offset = clamp(seg, 0, this.dur); this.avisar(); } }
-  parar() { if (this.nodo) { const n = this.nodo; this.nodo = null; n.onended = null; try { n.stop(); } catch {} try { n.disconnect(); } catch {} } }
+  parar() {
+    if (this.nodo) { const n = this.nodo; this.nodo = null; n.onended = null; try { n.stop(); } catch {} try { n.disconnect(); } catch {} }
+    if (this.extra) { for (const x of this.extra) { try { x.stop(); } catch {} try { x.disconnect(); } catch {} } this.extra = null; }
+    if (this.gans) { for (const g of this.gans) { try { g.disconnect(); } catch {} } this.gans = null; }
+  }
+  // una ganancia por stem (la canción original va muda, solo marca el reloj y el final)
+  ganStem(st, on) {
+    const g = this.S.ac.createGain(); g.gain.value = on ? 1 : 0; g.connect(this.entrada);
+    if (st) g.stem = st.id;
+    (this.gans || (this.gans = [])).push(g); return g;
+  }
+  // se calló o se volvió a oír un stem
+  mezclaCambio() {
+    if (this.fuente !== 'archivo') return;
+    const propia = this.stems.mezclaPropia;
+    if (this.sonando && propia !== this.mezclaStems) { this.reproducir(this.pos()); return; }
+    if (this.gans) for (const g of this.gans) {
+      if (!g.stem) continue;
+      const st = this.stems.lista.find((x) => x.id === g.stem);
+      g.gain.setTargetAtTime(st && st.on ? 1 : 0, this.S.ac.currentTime, 0.02);
+    }
+    this.avisar();
+  }
+  // los stems llegaron (o el mapa, después): envolventes por stem y golpes de la batería
+  stemsListos() {
+    if (this.mapa) this.stems.prepararMapa(this.mapa, analizar, picos).then(() => this.avisar());
+    this.avisar();
+  }
   // posición en el reloj del audio: se congela sola cuando el contexto se suspende (pausa, ventana sin foco)
   pos() {
     if (this.fuente !== 'archivo' || !this.buffer) return 0;
     if (!this.sonando || !this.S.ac) return this.offset;
-    const p = this.offset + (this.S.ac.currentTime - this.t0);
+    const p = this.offset + Math.max(0, this.S.ac.currentTime - this.t0);
     return this.nodo && this.nodo.loop ? p % this.dur : Math.min(p, this.dur);
   }
 
@@ -161,13 +229,29 @@ export class Pista {
     this.ult = [-99, -99, -99]; this.corto = 0; this.largo = 0; this.minRatio = 1; this.minT = 0;
     this.r = { real: true, pista: true, tv: 0, estilo: 'tu música', bpm: 120, seccion: 'intro', prog: 0, compas: 0, compases: 8,
       tKick: -99, kick: 0, tCaja: -99, tDrop: -99, tHueco: -99, wob: 0, bandas: [0, 0, 0],
-      tBeat: -99, tono: -1, menor: false, brillo: 0.5, energia: 0, mapa: false };
+      tBeat: -99, tono: -1, menor: false, brillo: 0.5, energia: 0, mapa: false, stems: null };
     this.tPrev = performance.now() / 1000; this.subeT = 0;
     this.crV = new Float32Array(12); this.tonoT = 0;
+    if (this.vivo) this.vivo.reiniciar();
   }
 
-  // una lectura por cuadro (la llama la sala); devuelve el estado en el mismo formato que la máquina de Señal
+  // una lectura por cuadro (la llama la sala). Con micrófono o MIDI, vivo.js pone el pulso y la fase
+  // y adelanta los golpes según el retardo; después el estado sale a TouchDesigner si está activa.
   estado() {
+    const now = performance.now() / 1000;
+    let r;
+    if (this.fuente === 'midi') {
+      const dt = clamp(now - this.tPrev, 1 / 240, 0.1); this.tPrev = now;
+      r = this.midi.estado(this.r, dt, now);
+      for (let k = 0; k < 3; k++) this.b[k] = r.bandas[k];
+    } else r = this.estadoCrudo();
+    if (this.enVivo) this.vivo.ajustar(r, now);
+    this.salida.enviar(r, this.enVivo ? this.vivo : null);
+    return r;
+  }
+
+  // el análisis de siempre: archivo (con o sin mapa) o micrófono; mismo formato que la máquina de Señal
+  estadoCrudo() {
     const r = this.r, now = performance.now() / 1000, dt = clamp(now - this.tPrev, 1 / 240, 0.1);
     this.tPrev = now;
     r.mapa = !!(this.mapa && this.fuente === 'archivo');
@@ -256,15 +340,30 @@ export class Pista {
     r.tv = t;
     const f = clamp((t - M.off) * M.fps, 0, M.nF - 1), i0 = Math.floor(f), fr = f - i0, i1 = Math.min(M.nF - 1, i0 + 1);
     const caida = 0.35 + (0.04 - 0.35) * A.suavizado;
+    // con stems, cada visual sigue el stem que le toca (panel: «qué mueve cada cosa»); por omisión
+    // golpe ← batería (el bombo), torsión ← voz, chispas ← otros (y los cortes con la caja de la batería)
+    const SM = A.porStem && this.stems.mapa, ent = (e) => (e ? e[i0] * (1 - fr) + e[i1] * fr : 0);
+    const R = { ...RUTA_BASE, ...(A.ruta || {}) };
+    const nivel = (k, src) => (src === 'mezcla' || !SM || !SM[src] ? M.bandas[k][i0] * (1 - fr) + M.bandas[k][i1] * fr : ent(SM[src]));
+    const deStem = SM ? [nivel(0, R.golpe), nivel(1, R.torsion), nivel(2, R.chispas)] : null;
+    if (SM) {
+      const ev1 = (E) => (E ? ultimo(E.t, t) : -1), tEv = (E) => { const i = ev1(E); return i >= 0 ? E.t[i] : -99; };
+      const X = SM.ataques || {};
+      r.stems = { voz: ent(SM.voz), bateria: ent(SM.bateria), bajo: ent(SM.bajo), otros: ent(SM.otros),
+        tVoz: tEv(SM.entradasVoz), tSilaba: tEv(X.voz), tBajo: tEv(X.bajo), tPlatillo: tEv(SM.platillos), tOtros: tEv(X.otros), ruta: R };
+      r.stems.vozOn = r.stems.voz > 0.25;
+    } else r.stems = null;
     for (let k = 0; k < 3; k++) {
-      const v = clamp(M.bandas[k][i0] * (1 - fr) + M.bandas[k][i1] * fr, 0, 1);
+      const v = deStem ? clamp(deStem[k], 0, 1) : clamp(M.bandas[k][i0] * (1 - fr) + M.bandas[k][i1] * fr, 0, 1);
       this.b[k] += (v - this.b[k]) * clamp((v > this.b[k] ? 0.6 : caida) * dt * 60, 0, 1);
     }
     // la sensibilidad decide qué golpes cuentan, por su fuerza (la mediana de la canción vale 1)
     const um = 0.5 / clamp(A.sensibilidad, 0.2, 3);
     const ev = (E) => { let i = ultimo(E.t, t), n = 0; while (i >= 0 && E.s[i] < um && n < 32) { i--; n++; } return n >= 32 ? -1 : i; };
-    const ik = ev(M.golpes); r.tKick = ik >= 0 ? M.golpes.t[ik] : -99; r.kick = ik >= 0 ? clamp(0.45 + 0.3 * M.golpes.s[ik], 0.45, 1) : 0;
-    const ic = ev(M.cajas); r.tCaja = ic >= 0 ? M.cajas.t[ic] : -99;
+    const evDe = (src, deBat) => (!SM || src === 'mezcla' ? null : src === 'bateria' ? deBat || (SM.ataques && SM.ataques.bateria) : SM.ataques && SM.ataques[src]);
+    const G = (SM && evDe(R.golpe, SM.golpes)) || M.golpes, C = (SM && evDe(R.chispas, SM.cajas)) || M.cajas;
+    const ik = ev(G); r.tKick = ik >= 0 ? G.t[ik] : -99; r.kick = ik >= 0 ? clamp(0.45 + 0.3 * G.s[ik], 0.45, 1) : 0;
+    const ic = ev(C); r.tCaja = ic >= 0 ? C.t[ic] : -99;
     const id = ultimo(M.drops, t); r.tDrop = id >= 0 ? M.drops[id] : -99;
     const ih = ultimo(M.huecos, t); r.tHueco = ih >= 0 && M.huecos[ih] > r.tDrop ? M.huecos[ih] : -99;
     let a = 0, b = M.secciones.length - 1;

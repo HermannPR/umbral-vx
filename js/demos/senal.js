@@ -58,10 +58,10 @@ const PARCHES = [
     col: [['thresh', 0.5, 0.06]], fb: [0.9, 1.02, 0], croma: 0.0 },
 ];
 // opciones del panel
-const COLOR = ['fijas', 'tonalidad', 'cada drop', 'cada compás', 'arcoíris'];
-const ESCENAS = ['manual', 'en cada drop', 'por sección', 'cada 8 compases', 'cada 16 compases'];
+const COLOR = ['fijas', 'tonalidad', 'cada drop', 'cada compás', 'arcoíris', 'cuando entra la voz'];
+const ESCENAS = ['manual', 'en cada drop', 'por sección', 'cada 8 compases', 'cada 16 compases', 'cuando entra la voz'];
 const ESPEJO = ['no', 'horizontal', 'cuatro'];
-const FX_BASE = { color: 'tonalidad', escenas: 'manual', osciloscopio: true, capas: true, barrido: 0, zoom: 0.5, espejo: 'no', mosh: 0, estrobo: false };
+const FX_BASE = { color: 'tonalidad', escenas: 'manual', osciloscopio: true, capas: true, barrido: 0, zoom: 0.5, espejo: 'no', mosh: 0, estrobo: false, stems: true };
 const CLAVE_FX = 'umbral.senal';
 const TAU = Math.PI * 2;
 // el osciloscopio y las chispas cambian con cada preset (semilla = su id) y leen su imagen
@@ -571,7 +571,7 @@ export default class Senal {
     const yo = this;
     window.__senal = {
       estilos: SENAL_ESTILOS.map((e) => e.nombre),
-      estado: () => { const A = yo.A || {}; return { estilo: SENAL_ESTILOS[yo.estiloI].nombre, parche: yo.P.nombre, audio: { real: !!A.real, estilo: A.estilo, seccion: A.seccion, adelanto: A.adelanto, tKick: A.tKick, tv: A.tv }, nivel: yo.nivel, esc: yo.esc, chispas: yo.nAct, frac: yo.fracPrev, capas: { ...yo.capas, forma: FORMAS[yo.capas.forma] } }; },
+      estado: () => { const A = yo.A || {}; return { estilo: SENAL_ESTILOS[yo.estiloI].nombre, parche: yo.P.nombre, audio: { real: !!A.real, estilo: A.estilo, seccion: A.seccion, adelanto: A.adelanto, tKick: A.tKick, tv: A.tv }, nivel: yo.nivel, esc: yo.esc, chispas: yo.nAct, frac: yo.fracPrev, capas: { ...yo.capas, forma: FORMAS[yo.capas.forma] }, stems: yo.sv }; },
       lento: (ms) => { yo.lento = ms; },
       // color dominante que calculó la GPU (para pruebas)
       dominante: async () => { const dv = yo.ctx.device, b = dv.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }); const e = dv.createCommandEncoder(); e.copyBufferToBuffer(yo.dom, 0, b, 0, 16); dv.queue.submit([e.finish()]); await b.mapAsync(GPUMapMode.READ); const v = [...new Float32Array(b.getMappedRange())]; b.destroy(); return v; },
@@ -873,11 +873,18 @@ export default class Senal {
     const beat = 60 / (A.bpm || 120);
     const inv = V.inv && A.tDrop > -90 && tv >= A.tDrop && tv - A.tDrop < beat * 0.5 ? 1 : 0;
     const wob = clamp(A.wob || 0, 0, 1);
+    // stems: si separaste tu canción, cada pista mueve lo suyo (bajo → pulso de zoom, platillos → chispas finas, voz → color o escena)
+    const S = this.fx.stems && A.stems ? A.stems : null;
+    const bajoP = S ? env(S.tBajo, 7) * (0.5 + 0.5 * S.bajo) : 0;
+    const nuevaVoz = !!S && S.tVoz > -90 && tv >= S.tVoz && S.tVoz !== this.vozVista;
+    if (nuevaVoz) { this.vozVista = S.tVoz; this.nVoces = (this.nVoces || 0) + 1; }
     // chispas que nacen este cuadro
     let c0 = 0, c1 = 0, c2 = 0;
     const fP = this.fPart * V.chispas;
     if (A.tKick !== this.ultKick && A.tKick > -90 && tv >= A.tKick) { this.ultKick = A.tKick; c1 = Math.round(700 * fP * (0.4 + enDrop * 0.6)); }
     if (A.tDrop !== this.ultDrop && A.tDrop > -90 && tv >= A.tDrop) { this.ultDrop = A.tDrop; c2 = Math.round(6000 * fP); }
+    if (S && S.tPlatillo !== this.ultPlat && S.tPlatillo > -90 && tv >= S.tPlatillo) { this.ultPlat = S.tPlatillo; c1 += Math.round(180 * fP); this.nPlat = (this.nPlat || 0) + 1; }
+    this.sv = S ? { bajo: bajoP, voces: this.nVoces || 0, platillos: this.nPlat || 0 } : null;
     if (sub > 0 && !hueco) c0 = Math.round(sub * sub * 9000 * dt * fP);
     const n = this.nAct = Math.max(256, Math.round((this.nMax * this.fPart) / 256) * 256);
     c2 = Math.min(c2, n >> 1); c1 = Math.min(c1, n >> 3); c0 = Math.min(c0, n >> 3);
@@ -892,12 +899,13 @@ export default class Senal {
     this.ultSec = A.seccion || this.ultSec;
     if (A.real && this.edad > 1.5) {
       const E = F.escenas;
-      if ((E === 'en cada drop' && nuevoDrop) || (E === 'por sección' && nuevaSec) || (E === 'cada 8 compases' && nuevoCompas && this.nCompases % 8 === 0) || (E === 'cada 16 compases' && nuevoCompas && this.nCompases % 16 === 0)) this.cambiarEscena();
+      if ((E === 'en cada drop' && nuevoDrop) || (E === 'por sección' && nuevaSec) || (E === 'cada 8 compases' && nuevoCompas && this.nCompases % 8 === 0) || (E === 'cada 16 compases' && nuevoCompas && this.nCompases % 16 === 0) || (E === 'cuando entra la voz' && nuevaVoz)) this.cambiarEscena();
     }
     const M = F.color;
     let rapidez = 2.5;
     if (M === 'tonalidad' && A.tono != null && A.tono >= 0) { const o = (A.tono * TAU) / 12; this.hueObj = this.hue + (((o - this.hue) % TAU) + TAU * 1.5) % TAU - TAU / 2; rapidez = 1.6; }
     else if (M === 'cada drop') { if (nuevoDrop) this.hueObj += 2.4; rapidez = 7; }
+    else if (M === 'cuando entra la voz') { if (nuevaVoz) this.hueObj += 2.1; rapidez = 5; }
     else if (M === 'cada compás' || (M === 'tonalidad' && nuevoCompas && this.nCompases % 4 === 0)) { if (nuevoCompas) this.hueObj += M === 'tonalidad' ? TAU / 4 : TAU / 12; rapidez = 4; }
     else if (M === 'arcoíris') this.hueObj += dt * (0.22 + kick * 0.9 * R);
     this.hue += (this.hueObj - this.hue) * Math.min(1, dt * rapidez);
@@ -912,7 +920,7 @@ export default class Senal {
     f.set([iw, ih, t, P.geo.length], 0);
     f.set([FUENTES[P.fuente[0]], P.fuente[1], P.fuente[2] || 0, P.fuente[3] || 0], 4);
     const tr = this.trans * this.trans * (3 - 2 * this.trans);
-    f.set([P.col.length, P.croma, Math.min(0.96, Math.max(P.fb[0] + drop * 0.03, 0.95 * tr)), P.fb[1] + kick * 0.004 * R + tr * 0.025], 8);
+    f.set([P.col.length, P.croma, Math.min(0.96, Math.max(P.fb[0] + drop * 0.03, 0.95 * tr)), P.fb[1] + (kick * 0.004 + bajoP * 0.005) * R + tr * 0.025], 8);
     f.set([P.fb[2], kick * R, wob, 0], 12);
     const D = DUOS[this.palette].c.map((c) => girar(c, this.hue));
     f.set([...D[0], 0], 16); f.set([...D[1], 0], 20); f.set([...D[2], 0], 24);
@@ -937,8 +945,8 @@ export default class Senal {
     fc.set([t, kick * V.golpe * R, caja, dropG * R], 4);
     fc.set([clamp(Math.max((dropG * dropG * 0.9 + caja * sub * 0.2) * V.destello * R, estrobo), 0, 1), inv, (0.0015 + kick * 0.007 + dropG * 0.02 + wob * enDrop * 0.004) * V.croma * R, clamp((caja * 0.8 + dropG) * V.glitch * R, 0, 1.5)], 8);
     fc.set([...D[2], F.osciloscopio ? (0.05 + 0.1 * enDrop + 0.04 * sub) / Math.max(0.25, amp) * 0.5 : 0], 12);
-    fc.set([1 + kick * 0.22 * V.golpe * R, hueco, ((F.capas ? 1.6 : 1.1) + dropG * 3 + kick) * (H / 1000), 0], 16);
-    fc.set([F.barrido, clamp(F.zoom * (kick * 0.12 * V.golpe + dropG * 0.3 + sub * sub * 0.08) * R, 0, 0.5), ESPEJO.indexOf(F.espejo), 0], 20);
+    fc.set([1 + (kick * 0.22 + bajoP * 0.1) * V.golpe * R, hueco, ((F.capas ? 1.6 : 1.1) + dropG * 3 + kick) * (H / 1000), 0], 16);
+    fc.set([F.barrido, clamp(F.zoom * ((kick * 0.12 + bajoP * 0.1) * V.golpe + dropG * 0.3 + sub * sub * 0.08) * R, 0, 0.5), ESPEJO.indexOf(F.espejo), 0], 20);
     const CP = this.capas;
     fc.set([CP.forma, CP.radio, CP.mezcla, CP.scope], 28);
     fc.set(this.onda, 32);

@@ -11,6 +11,8 @@ import { Antesala } from './antesala.js';
 import { Pista } from './pista.js';
 import { Panel } from './panel.js';
 import { Grabadora, puedeGrabar } from './grabar.js';
+import { GrabadoraTramos } from './tramos.js';
+import { Rave } from './rave.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('c');
@@ -534,6 +536,23 @@ async function grabarCancion() {
   aviso('Grabando la canción completa · G detiene');
   setTimeout(() => { if (grabadora.activa) pista.reproducir(0); }, 350);
 }
+// en vivo: modo rave (proyector, escenas por novedad) y grabación por tramos sin diálogos
+// la Señal viva (la sala la recrea): la misma pregunta para el panel, el modo rave y la salida de datos
+const senalViva = () => (current && idx === iSenal && modo === 'sala' ? current : null);
+const rave = new Rave({ pista, senal: senalViva, lienzo: () => canvas });
+const tramos = new GrabadoraTramos();
+pista.salida.contexto = () => { const S = senalViva(), e = S && S.sel; return { escena: e ? e.n : '', preset: e ? e.id : '' }; };
+addEventListener('pagehide', () => rave.cerrarSalidas());   // sin la página, las ventanas de salida quedan en negro
+async function grabarTramos() {
+  if (tramos.activa) { await tramos.detener(); return; }
+  if (modo !== 'sala' || !current) { aviso('Entra a una sala para grabar'); return; }
+  sonido.iniciar(true);
+  const nodos = [];
+  if (sonido.salida) nodos.push(sonido.salida);
+  if (pista.fuente === 'mic' && pista.mic) nodos.push(pista.mic);
+  await tramos.iniciar({ canvas, ac: sonido.ac, nodos, fps: Math.min(60, FPS_MAX), nombre: 'umbral-' + SALAS[idx].slug });
+  aviso('Grabando por tramos de ' + tramos.min + ' min · ' + tramos.dest);
+}
 pista.alTerminar = () => { if (grabandoCancion && grabadora.activa) setTimeout(() => grabadora.detener(), 800); };
 // escenario: pantalla completa, sin panel ni texto (H lo devuelve)
 function escenario() {
@@ -583,6 +602,7 @@ function accPanel() {
     pantallaCompleta, captura, copiarEnlace, escenario,
     formatos: Object.keys(FORMATOS), formato: (x) => fijarFormato(x),
     grabar, grabarCancion, grabando: () => grabadora.activa, puedeGrabar: puedeGrabar(),
+    rave, tramos, grabarTramos,
     segundosRec: () => grabadora.segundos, pausada: () => pausaSala && modo === 'sala',
     ocultarTodo: alternarTexto,
     antesala: () => abrirAntesala(),
@@ -600,7 +620,7 @@ function accPanel() {
     calidades: ['automática', ...CALIDADES.map((c) => c.nombre)],
     fpsOpciones: FPS_OPCIONES, fps: (x) => fijarFps(x),
     pista,
-    senal: () => (current && idx === iSenal && modo === 'sala' ? current : null),
+    senal: senalViva,
     cargarCancion,
     aviso,
   };
@@ -835,6 +855,7 @@ window.__lab = {
   panel: () => panel,
   pista,
   formato: (x) => fijarFormato(x), grabar: () => grabar(), grabarCancion: () => grabarCancion(), grabadora,
+  rave, tramos, grabarTramos,
   simularPerdidaGPU() { simulandoPerdida = true; ctx.device.destroy(); },
   gobernar() { gobLento = 99; },
 };

@@ -2,9 +2,11 @@
 // Se abre y se cierra con «?» o con el botón de la esquina, y recuerda cómo lo dejaste (abierto o cerrado,
 // y qué secciones). Los controles finos son lil-gui (MIT, George Michael Brower), tematizado con la letra
 // y la tinta de la galería; el armazón, la forma de onda y la zona para soltar canciones son propios.
+import { armarVivo } from './panel-vivo.js';
 import GUI from './vendor/lil-gui.esm.min.js';
 import { MARCA } from './salas.js';
 import { COLECCIONES, NOMBRE_COL } from './motores/catalogo.js';
+import { RUTA_BASE, FUENTES_RUTA } from './pista.js';
 
 const $ = (id) => document.getElementById(id);
 const CLAVE = 'umbral.panel';
@@ -46,6 +48,7 @@ export class Panel {
       <div class="pn-cuerpo" id="pn-cuerpo">
         <section id="pn-presets"></section>
         <section id="pn-musica"></section>
+        <section id="pn-vivo"></section>
         <section id="pn-sala"></section>
         <section id="pn-vista"></section>
         <section id="pn-controles"></section>
@@ -164,7 +167,8 @@ export class Panel {
   sala({ num, acto, nombre, D, slug }) {
     $('pn-num').textContent = `Nº ${num} · ${acto}`;
     $('pn-nombre').textContent = nombre;
-    for (const k of ['sala', 'musica', 'presets']) { if (this.guis[k]) { this.guis[k].destroy(); delete this.guis[k]; } }
+    for (const k of ['sala', 'musica', 'presets', 'vivo']) { if (this.guis[k]) { this.guis[k].destroy(); delete this.guis[k]; } }
+    if (this.quitarVivo) { this.quitarVivo(); this.quitarVivo = null; }
     if (this.quitarCat) { this.quitarCat(); this.quitarCat = null; }
     this.selFormato = this.btnCancion = this.onda = null; this.valImg = this.senalRef = null;
     if (this.quitarOyente) { this.quitarOyente(); this.quitarOyente = null; }
@@ -180,7 +184,7 @@ export class Panel {
     const ult = caja.lastElementChild; if (caja.children.length % 2 === 0 && ult && !ult.classList.contains('ancho')) ult.classList.add('ancho');
     caja.addEventListener('click', (e) => { const t = e.target.closest('button[data-b]'); if (t) A.pulsar(t.dataset.b); });
     g.$children.appendChild(caja);
-    if (slug === 'senal') { this.armarPresets(); this.armarMusica(); }
+    if (slug === 'senal') { this.armarPresets(); this.armarMusica(); this.quitarVivo = armarVivo(this.seccion('pn-vivo', 'En vivo', 'vivo'), this.acc); }
   }
 
   // presets de todos los motores: buscar, filtrar por colección, favoritos, al azar y una capa de efecto encima
@@ -268,6 +272,20 @@ export class Panel {
         <div class="pm-fila"><button type="button" class="pm-play">▶ reproducir</button><button type="button" class="pm-otra">otra</button><button type="button" class="pm-quitar">quitar</button></div>
         <div class="pm-fila pm-tempo" hidden><span class="pm-tt">tempo</span><button type="button" data-t="0.5">÷ 2</button><button type="button" data-t="1">tal cual</button><button type="button" data-t="2">× 2</button></div>
       </div>
+      <div class="pm-stems" hidden>
+        <div class="pm-vt">stems · voz, batería, bajo y otros</div>
+        <div class="pm-fila pm-st-ini"><button type="button" class="pm-separar">separar stems</button><select class="pm-motor" aria-label="Dónde separar" hidden></select></div>
+        <div class="pm-st-prog" hidden><div class="pm-barra"><i></i></div><div class="pm-fila"><span class="pm-st-txt"></span><button type="button" class="pm-st-cancelar">cancelar</button></div></div>
+        <div class="pm-st-lista"></div>
+        <div class="pm-fila pm-st-fin" hidden><button type="button" class="pm-st-todos">⤓ todos en WAV</button><button type="button" class="pm-st-otra">separar de nuevo</button></div>
+        <label class="pm-st-porstem" hidden><input type="checkbox"> cada visual sigue su stem</label>
+        <div class="pm-st-ruta" hidden>
+          <label>golpe y zoom <select data-r="golpe"></select></label>
+          <label>torsión <select data-r="torsion"></select></label>
+          <label>chispas y cortes <select data-r="chispas"></select></label>
+        </div>
+        <div class="pm-st-nota"></div>
+      </div>
       <div class="pm-video" hidden>
         <div class="pm-vt">video de la canción</div>
         <div class="pm-fila"><select class="pm-formato" aria-label="Formato del video"></select></div>
@@ -293,6 +311,58 @@ export class Panel {
     sel.addEventListener('change', () => A.formato(sel.value));
     const bc = this.btnCancion = q('.pm-grabar');
     if (A.puedeGrabar) bc.addEventListener('click', () => A.grabarCancion()); else { bc.disabled = true; bc.textContent = 'este navegador no graba video'; }
+    // stems: separar, avance, escuchar/callar/solo y descargar cada uno
+    const ST = P.stems, motor = q('.pm-motor');
+    const separar = () => ST.separar(ST.puente && motor.value === 'puente' ? 'puente' : 'navegador');
+    q('.pm-separar').addEventListener('click', separar);
+    q('.pm-st-otra').addEventListener('click', separar);
+    q('.pm-st-cancelar').addEventListener('click', () => ST.cancelar());
+    q('.pm-st-todos').addEventListener('click', () => ST.descargarTodos());
+    const porStem = q('.pm-st-porstem input');
+    porStem.checked = P.ajustes.porStem !== false;
+    porStem.addEventListener('change', () => { P.ajustar('porStem', porStem.checked); pintarStems(); });
+    // qué stem mueve cada visual (se recuerda con los demás ajustes de la reacción)
+    const opRuta = Object.entries(FUENTES_RUTA).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    caja.querySelectorAll('.pm-st-ruta select').forEach((sl) => {
+      sl.innerHTML = opRuta;
+      sl.value = (P.ajustes.ruta && P.ajustes.ruta[sl.dataset.r]) || RUTA_BASE[sl.dataset.r];
+      sl.addEventListener('change', () => P.ajustar('ruta', { ...RUTA_BASE, ...(P.ajustes.ruta || {}), [sl.dataset.r]: sl.value }));
+    });
+    q('.pm-st-lista').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-id]'); if (!b) return;
+      if (b.classList.contains('pm-st-on')) ST.alternar(b.dataset.id);
+      else if (b.classList.contains('pm-st-solo')) ST.solo(b.dataset.id);
+      else if (b.classList.contains('pm-st-wav')) ST.descargar(b.dataset.id);
+    });
+    q('.pm-st-nota').addEventListener('click', (e) => { if (e.target.closest('.pm-st-borrar')) ST.borrarModelo(); });
+    const pintarStems = () => {
+      const hay = P.fuente === 'archivo', ocupado = ST.ocupado, listo = ST.hay;
+      q('.pm-stems').hidden = !hay;
+      if (!hay) return;
+      const conPuente = !!ST.puente;
+      motor.hidden = !conPuente || ocupado || listo;
+      if (conPuente && !motor.options.length) motor.innerHTML = `<option value="navegador">en el navegador · 4</option><option value="puente">Demucs de esta Mac · ${ST.puente.stems ? ST.puente.stems.length : 6}</option>`;
+      q('.pm-st-ini').hidden = ocupado || listo;
+      q('.pm-st-prog').hidden = !ocupado;
+      q('.pm-barra i').style.width = `${Math.round(ST.p * 1000) / 10}%`;
+      q('.pm-st-txt').textContent = ST.texto;
+      q('.pm-st-fin').hidden = !listo || ocupado;
+      q('.pm-st-porstem').hidden = !listo;
+      q('.pm-st-ruta').hidden = !listo || !porStem.checked;
+      const clave = ST.lista.map((x) => x.id + (x.on ? 1 : 0)).join();
+      if (clave !== this.stClave) {
+        this.stClave = clave;
+        q('.pm-st-lista').innerHTML = ST.lista.map((x) => `<div class="pm-fila pm-st-fila"><button type="button" class="pm-st-on${x.on ? ' on' : ''}" data-id="${x.id}" aria-pressed="${x.on}" title="escuchar o callar">${x.on ? '♪' : '–'} ${esc(x.nombre)}</button><button type="button" class="pm-st-solo" data-id="${x.id}" title="solo este">solo</button><button type="button" class="pm-st-wav" data-id="${x.id}" title="descargar en WAV">⤓ wav</button></div>`).join('');
+      }
+      const nota = q('.pm-st-nota');
+      const txt = ST.fase === 'error' ? `⚠ ${ST.texto}`
+        : listo ? `${ST.texto}${ST.mapa ? '' : ' · preparando la reacción por stem'}`
+        : ocupado ? ''
+        : ST.texto === 'cancelado' ? 'cancelado'
+        : ST.guardado ? 'Se separa en tu equipo. El modelo ya está guardado en este navegador y funciona sin conexión.'
+        : `Se separa en tu equipo. La primera vez se baja el modelo (${ST.modeloMB} MB, HTDemucs de Meta); después funciona sin conexión.`;
+      if (nota.dataset.t !== txt + ST.guardado) { nota.dataset.t = txt + ST.guardado; nota.innerHTML = esc(txt) + (ST.guardado && !ocupado && !listo ? ' <button type="button" class="pm-st-borrar">borrar modelo</button>' : ''); }
+    };
     const onda = this.onda = q('.pm-onda');
     onda.addEventListener('pointerdown', (e) => { if (P.fuente !== 'archivo') return; const r = onda.getBoundingClientRect(); P.buscar(((e.clientX - r.left) / r.width) * P.dur); });
 
@@ -312,6 +382,7 @@ export class Panel {
       const fx = g.addFolder('Efectos');
       fx.add(F, 'osciloscopio').name('osciloscopio').onChange((v) => s.efecto('osciloscopio', v));
       fx.add(F, 'capas').name('onda y chispas siguen al preset').onChange((v) => s.efecto('capas', v));
+      if ('stems' in F) fx.add(F, 'stems').name('cada stem mueve lo suyo').onChange((v) => s.efecto('stems', v));
       fx.add(F, 'zoom', 0, 1, 0.05).name('zoom radial en golpes').onChange((v) => s.efecto('zoom', v));
       fx.add(F, 'barrido', 0, 1, 0.05).name('líneas de monitor').onChange((v) => s.efecto('barrido', v));
       fx.add(F, 'mosh', 0, 1, 0.05).name('datamosh').onChange((v) => s.efecto('mosh', v));
@@ -344,6 +415,7 @@ export class Panel {
       }
       const tempo = q('.pm-tempo'); tempo.hidden = !(hay && P.mapa);
       tempo.querySelectorAll('button').forEach((b) => b.classList.toggle('on', +b.dataset.t === P.tempo));
+      pintarStems();
       this.metaT = 0; this.ondaPos = -1; this.metaTxt = '';
     };
     this.pintarMusica = pintar;
