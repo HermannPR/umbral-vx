@@ -12,6 +12,8 @@ export function armarVivo(g, A) {
     <div class="pm-vt">modo rave · se queda sola horas</div>
     <div class="pm-fila"><button type="button" class="pv-rave">▶ modo rave</button></div>
     <div class="pv-estado pm-meta"></div>
+    <div class="pm-fila"><button type="button" class="pv-recal" title="Vuelve a medir el ruido del cuarto (2 s)">recalibrar el micrófono</button></div>
+    <div class="pv-cal pm-meta"></div>
     <details class="pv-proy"><summary>proyector y salidas</summary>
       <label>giro <select class="pv-giro"><option value="0">0°</option><option value="180">180° (colgado de cabeza)</option></select></label>
       <label>espejo <select class="pv-espejo"><option>no</option><option>horizontal</option><option>cuatro</option></select></label>
@@ -49,6 +51,7 @@ export function armarVivo(g, A) {
   caja.querySelectorAll('.pv-pop').forEach((b) => b.addEventListener('click', intentar(() => {
     const p = b.dataset.p; R.abrirSalida(p, { x: p === 'tele' ? 1920 : 0, girar: p === 'proyector' && R.cfg.giro === 180 });
   })));
+  q('.pv-recal').addEventListener('click', () => { P.recalibrar(); aviso('Midiendo el cuarto: 2 s'); });
   q('.pv-cerrar').addEventListener('click', () => R.cerrarSalidas());
   q('.pv-veto').addEventListener('click', () => { R.olvidarVetos(); aviso('Vetos olvidados'); });
 
@@ -92,6 +95,10 @@ export function armarVivo(g, A) {
     q('.pv-estado').textContent = P.enVivo
       ? `${P.fuente === 'midi' ? 'MIDI' : 'micrófono'} · ${V.bpm ? V.bpm + ' BPM' : 'buscando el pulso'}${V.amarrado ? ' · amarrado' : ''} · retardo ${V.retardoMs} ms · novedad ${V.novedad} · ${V.cambios} cambios${R.activo ? ' · vetadas ' + R.veto.size : ''}`
       : 'Usa el micrófono o el MIDI para el modo en vivo.';
+    const C = P.cal && P.cal.estado, esMic = P.fuente === 'mic';
+    q('.pv-recal').hidden = !esMic;
+    q('.pv-cal').textContent = !esMic || !C ? '' : C.calibrando ? `autocalibrando: midiendo el cuarto… ${C.faltan.toFixed(1)} s`
+      : `autocalibrado · ruido del cuarto ${C.pisoDb} dB · música ${C.snrDb > 0 ? '+' : ''}${C.snrDb} dB sobre el ruido · ${C.presencia > 0.5 ? 'suena' : 'silencio'} · sensibilidad ${C.sensibilidad.map((x) => '×' + x).join(' / ')}`;
     const gi = q('.pv-giro'); if (document.activeElement !== gi) gi.value = String(R.cfg.giro);
     const es = q('.pv-espejo'); if (document.activeElement !== es) es.value = R.cfg.espejo;
     q('.pv-expo').checked = !!R.cfg.exposicion;

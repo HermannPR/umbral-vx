@@ -14,6 +14,7 @@
 import { analizar, picos, ultimo, tonalidad, quinta, nombreTono } from './analisis.js';
 import { Stems } from './stems.js';
 import { Vivo } from './vivo.js';
+import { AutoCal } from './autocal.js';
 import { EntradaMidi } from './midi.js';
 import { SalidaTD } from './salida-td.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -233,7 +234,9 @@ export class Pista {
     this.tPrev = performance.now() / 1000; this.subeT = 0;
     this.crV = new Float32Array(12); this.tonoT = 0;
     if (this.vivo) this.vivo.reiniciar();
+    if (this.cal) this.cal.reiniciar(); else this.cal = new AutoCal();   // micrófono: piso de ruido y sensibilidad
   }
+  recalibrar() { this.cal.reiniciar(); this.avisar(); }
 
   // una lectura por cuadro (la llama la sala). Con micrófono o MIDI, vivo.js pone el pulso y la fase
   // y adelanta los golpes según el retardo; después el estado sale a TouchDesigner si está activa.
@@ -283,11 +286,15 @@ export class Pista {
       }
       const n = i1 - i0 + 1; flujo[k] = f / n; energia[k] = e / n;
     });
+    // con micrófono, autocal.js quita el ruido del cuarto, apaga todo en silencio y ajusta la sensibilidad
+    const mic = this.fuente === 'mic', C = this.cal;
+    if (mic) C.paso(energia, dt, now);
     // bandas con control de ganancia: el pico decae despacio (~8 s), así la canción llena la escala sola
     const caida = 0.35 + (0.04 - 0.35) * A.suavizado;
     for (let k = 0; k < 3; k++) {
-      this.pico[k] = Math.max(energia[k], this.pico[k] * Math.exp(-dt / 8), 1e-4);
-      const v = clamp(energia[k] / this.pico[k], 0, 1);
+      const e = mic ? C.neto(k, energia[k]) : energia[k];
+      this.pico[k] = Math.max(e, this.pico[k] * Math.exp(-dt / 8), mic ? C.picoMin(k) : 1e-4);
+      const v = clamp(e / this.pico[k], 0, 1) * (mic ? C.presencia : 1);
       this.b[k] += (v - this.b[k]) * clamp((v > this.b[k] ? 0.6 : caida) * dt * 60, 0, 1);
     }
     // golpes: flujo sobre su media + k·desviación de ~1.5 s
@@ -299,10 +306,10 @@ export class Pista {
       m /= nh;
       for (let i = 0; i < nh; i++) s += (h[i] - m) * (h[i] - m);
       s = Math.sqrt(s / nh);
-      const umbral = m + k0 * s + 1e-6;
-      const golpe = this.llenos > 20 && flujo[k] > umbral && flujo[k] > m * 1.25 && now - this.ult[k] > (k === 0 ? 0.12 : 0.09);
+      const umbral = m + k0 * (mic ? C.k[k] : 1) * s + 1e-6;
+      const golpe = this.llenos > 20 && (!mic || C.hayMusica) && flujo[k] > umbral && flujo[k] > m * 1.25 && now - this.ult[k] > (k === 0 ? 0.12 : 0.09);
       if (golpe) {
-        this.ult[k] = now;
+        this.ult[k] = now; if (mic) C.golpe(k, now);
         if (k === 0) { r.tKick = now; r.kick = clamp(0.55 + (flujo[k] / umbral - 1) * 0.6, 0.45, 1); }
         else if (k === 2 || (k === 1 && now - r.tCaja > 0.2)) r.tCaja = now;
       }

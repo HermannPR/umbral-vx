@@ -303,7 +303,7 @@ export class Panel {
     q('.pm-play').addEventListener('click', () => P.alternar());
     q('.pm-quitar').addEventListener('click', () => P.quitar());
     caja.querySelectorAll('.pm-tempo button').forEach((b) => b.addEventListener('click', () => P.fijarTempo(+b.dataset.t)));
-    q('.pm-mic').addEventListener('click', () => (P.fuente === 'mic' ? P.quitar() : P.microfono().catch((e) => A.aviso(e.name === 'NotAllowedError' ? 'Sin permiso para el micrófono' : e.message))));
+    q('.pm-mic').addEventListener('click', () => (P.fuente === 'mic' ? P.quitar() : P.microfono().then(() => A.aviso('Micrófono: se autocalibra en 2 s (mide el ruido del cuarto)')).catch((e) => A.aviso(e.name === 'NotAllowedError' ? 'Sin permiso para el micrófono' : e.message))));
     // video: formato (el mismo de Ajustes) y grabar de 0:00 al final
     const sel = this.selFormato = q('.pm-formato');
     sel.innerHTML = A.formatos.map((f) => `<option>${esc(f)}</option>`).join('');
